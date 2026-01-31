@@ -1,0 +1,33 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/crudder-ast",
+    "crates/crudder-lexer",
+    "crates/crudder-parser",
+    "crates/crudder-codegen",
+    "crates/crudder-cli",
+]
+exclude = ["demo"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+authors = ["Crudder Contributors"]
+
+[workspace.dependencies]
+# Internal crates
+crudder-ast = { path = "crates/crudder-ast" }
+crudder-lexer = { path = "crates/crudder-lexer" }
+crudder-parser = { path = "crates/crudder-parser" }
+crudder-codegen = { path = "crates/crudder-codegen" }
+
+# External dependencies
+logos = "0.14"
+ariadne = "0.4"
+clap = { version = "4", features = ["derive"] }
+quote = "1"
+proc-macro2 = "1"
+syn = { version = "2", features = ["full"] }
+prettyplease = "0.2"
+thiserror = "1"

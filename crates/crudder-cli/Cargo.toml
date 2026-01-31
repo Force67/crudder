@@ -1,0 +1,18 @@
+[package]
+name = "crudder-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CLI tool for the Crudder DSL"
+
+[[bin]]
+name = "crudder"
+path = "src/main.rs"
+
+[dependencies]
+crudder-ast.workspace = true
+crudder-lexer.workspace = true
+crudder-parser.workspace = true
+crudder-codegen.workspace = true
+clap.workspace = true
+thiserror.workspace = true

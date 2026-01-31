@@ -1,0 +1,9 @@
+[package]
+name = "crudder-lexer"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Lexer for the Crudder DSL"
+
+[dependencies]
+logos.workspace = true

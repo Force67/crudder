@@ -1,0 +1,31 @@
+# Rust / Cargo
+target/
+**/target/
+*.rs.bk
+
+# Node / frontend builds
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.vite/
+**/.vite/
+coverage/
+**/coverage/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Nix
+result
+result-*

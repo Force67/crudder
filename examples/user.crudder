@@ -1,0 +1,53 @@
+// User service example
+
+dto CreateUserRequest {
+    name: string
+    email: string
+}
+
+dto UserResponse {
+    id: uuid
+    name: string
+    email: string
+}
+
+dto GetUserRequest {
+    id: uuid
+}
+
+dto ListUsersRequest {
+    page: int
+    pageSize: int
+}
+
+dto ListUsersResponse {
+    users: []UserResponse
+    total: int
+}
+
+dto UpdateUserRequest {
+    id: uuid
+    name: string?
+    email: string?
+}
+
+dto DeleteUserRequest {
+    id: uuid
+}
+
+service UserService {
+    @rest("POST", "/users")
+    CreateUser(CreateUserRequest) -> UserResponse
+
+    @rest("GET", "/users/{id}")
+    GetUser(GetUserRequest) -> UserResponse
+
+    @rest("GET", "/users")
+    ListUsers(ListUsersRequest) -> ListUsersResponse
+
+    @rest("PUT", "/users/{id}")
+    UpdateUser(UpdateUserRequest) -> UserResponse
+
+    @rest("DELETE", "/users/{id}")
+    DeleteUser(DeleteUserRequest) -> void
+}

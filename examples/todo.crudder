@@ -1,0 +1,48 @@
+// Todo CRUD API with auth
+
+@table("todos")
+dto Todo {
+    @primary @auto id: uuid
+    title: string
+    completed: bool
+    @references(User) userId: uuid
+    @auto createdAt: timestamp
+}
+
+dto CreateTodoRequest {
+    title: string
+}
+
+dto UpdateTodoRequest {
+    title: string?
+    completed: bool?
+}
+
+dto TodoList {
+    todos: []Todo
+}
+
+dto Empty {}
+
+@storage("postgres")
+service TodoService {
+    @public
+    @rest("GET", "/todos")
+    ListTodos(Empty) -> TodoList
+
+    @authenticated
+    @rest("POST", "/todos")
+    CreateTodo(CreateTodoRequest) -> Todo
+
+    @authenticated
+    @rest("GET", "/todos/{id}")
+    GetTodo(Empty) -> Todo
+
+    @owner("userId")
+    @rest("PUT", "/todos/{id}")
+    UpdateTodo(UpdateTodoRequest) -> Todo
+
+    @owner("userId")
+    @rest("DELETE", "/todos/{id}")
+    DeleteTodo(Empty) -> Empty
+}
