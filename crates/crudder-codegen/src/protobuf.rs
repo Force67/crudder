@@ -123,6 +123,7 @@ fn primitive_to_proto(p: &PrimitiveType) -> String {
         PrimitiveType::Float => "double".to_string(),
         PrimitiveType::Bool => "bool".to_string(),
         PrimitiveType::Uuid => "string".to_string(), // UUIDs as strings
+        PrimitiveType::Cuid2 => "string".to_string(), // CUID2s as strings
         PrimitiveType::Timestamp => "google.protobuf.Timestamp".to_string(),
         PrimitiveType::Bytes => "bytes".to_string(),
     }

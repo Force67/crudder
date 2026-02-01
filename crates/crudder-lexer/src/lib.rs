@@ -32,6 +32,9 @@ pub enum Token {
     #[token("uuid")]
     Uuid,
 
+    #[token("cuid2")]
+    Cuid2,
+
     #[token("timestamp")]
     Timestamp,
 
@@ -162,15 +165,16 @@ mod tests {
 
     #[test]
     fn test_primitives() {
-        let tokens: Vec<_> = lex("string int float bool uuid timestamp bytes").unwrap();
-        assert_eq!(tokens.len(), 7);
+        let tokens: Vec<_> = lex("string int float bool uuid cuid2 timestamp bytes").unwrap();
+        assert_eq!(tokens.len(), 8);
         assert_eq!(tokens[0].token, Token::String);
         assert_eq!(tokens[1].token, Token::Int);
         assert_eq!(tokens[2].token, Token::Float);
         assert_eq!(tokens[3].token, Token::Bool);
         assert_eq!(tokens[4].token, Token::Uuid);
-        assert_eq!(tokens[5].token, Token::Timestamp);
-        assert_eq!(tokens[6].token, Token::Bytes);
+        assert_eq!(tokens[5].token, Token::Cuid2);
+        assert_eq!(tokens[6].token, Token::Timestamp);
+        assert_eq!(tokens[7].token, Token::Bytes);
     }
 
     #[test]

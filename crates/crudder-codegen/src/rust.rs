@@ -137,6 +137,7 @@ fn primitive_to_rust(p: &PrimitiveType) -> TokenStream {
         PrimitiveType::Float => quote! { f64 },
         PrimitiveType::Bool => quote! { bool },
         PrimitiveType::Uuid => quote! { Uuid },
+        PrimitiveType::Cuid2 => quote! { String },
         PrimitiveType::Timestamp => quote! { DateTime<Utc> },
         PrimitiveType::Bytes => quote! { Vec<u8> },
     }

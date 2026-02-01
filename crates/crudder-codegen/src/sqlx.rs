@@ -164,6 +164,7 @@ fn primitive_to_rust(p: &PrimitiveType) -> TokenStream {
         PrimitiveType::Float => quote! { f64 },
         PrimitiveType::Bool => quote! { bool },
         PrimitiveType::Uuid => quote! { Uuid },
+        PrimitiveType::Cuid2 => quote! { String },
         PrimitiveType::Timestamp => quote! { DateTime<Utc> },
         PrimitiveType::Bytes => quote! { Vec<u8> },
     }
@@ -792,6 +793,7 @@ fn type_to_sql(ty: &TypeRef) -> &'static str {
             PrimitiveType::Float => "DOUBLE PRECISION",
             PrimitiveType::Bool => "BOOLEAN",
             PrimitiveType::Uuid => "UUID",
+            PrimitiveType::Cuid2 => "TEXT",
             PrimitiveType::Timestamp => "TIMESTAMPTZ",
             PrimitiveType::Bytes => "BYTEA",
         },

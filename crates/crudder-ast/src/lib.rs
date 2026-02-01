@@ -8,6 +8,7 @@ pub enum PrimitiveType {
     Float,
     Bool,
     Uuid,
+    Cuid2,
     Timestamp,
     Bytes,
 }
@@ -21,6 +22,7 @@ impl PrimitiveType {
             PrimitiveType::Float => "float",
             PrimitiveType::Bool => "bool",
             PrimitiveType::Uuid => "uuid",
+            PrimitiveType::Cuid2 => "cuid2",
             PrimitiveType::Timestamp => "timestamp",
             PrimitiveType::Bytes => "bytes",
         }

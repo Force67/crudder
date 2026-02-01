@@ -482,6 +482,7 @@ fn primitive_to_typescript(p: &PrimitiveType) -> String {
         PrimitiveType::Float => "number".to_string(),
         PrimitiveType::Bool => "boolean".to_string(),
         PrimitiveType::Uuid => "string".to_string(),
+        PrimitiveType::Cuid2 => "string".to_string(),
         PrimitiveType::Timestamp => "Date".to_string(),
         PrimitiveType::Bytes => "Uint8Array".to_string(),
     }
@@ -548,6 +549,7 @@ fn primitive_to_zod(p: &PrimitiveType) -> String {
         PrimitiveType::Float => "z.number()".to_string(),
         PrimitiveType::Bool => "z.boolean()".to_string(),
         PrimitiveType::Uuid => "z.string().uuid()".to_string(),
+        PrimitiveType::Cuid2 => "z.string().cuid2()".to_string(),
         PrimitiveType::Timestamp => "z.coerce.date()".to_string(),
         PrimitiveType::Bytes => "z.instanceof(Uint8Array)".to_string(),
     }

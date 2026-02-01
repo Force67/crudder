@@ -306,6 +306,7 @@ impl Parser {
                     Token::Float => TypeRef::Primitive(PrimitiveType::Float),
                     Token::Bool => TypeRef::Primitive(PrimitiveType::Bool),
                     Token::Uuid => TypeRef::Primitive(PrimitiveType::Uuid),
+                    Token::Cuid2 => TypeRef::Primitive(PrimitiveType::Cuid2),
                     Token::Timestamp => TypeRef::Primitive(PrimitiveType::Timestamp),
                     Token::Bytes => TypeRef::Primitive(PrimitiveType::Bytes),
                     Token::Ident(name) => TypeRef::Named(name.clone()),
