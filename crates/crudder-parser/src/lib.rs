@@ -254,12 +254,43 @@ impl Parser {
 
         let (name, _) = self.expect_ident()?;
         self.expect(Token::Colon)?;
-        let (ty, end) = self.parse_type()?;
+        let (ty, mut end) = self.parse_type()?;
+
+        // Parse optional field index (e.g., `= 1`)
+        let index = if matches!(self.current_token(), Some(Token::Equals)) {
+            self.advance();
+            match self.current() {
+                Some(SpannedToken {
+                    token: Token::IntLiteral(n),
+                    span,
+                }) => {
+                    let n = *n;
+                    end = span.end;
+                    self.advance();
+                    Some(n)
+                }
+                Some(st) => {
+                    return Err(ParseError::UnexpectedToken {
+                        span: st.span.clone(),
+                        expected: "integer".to_string(),
+                        found: format!("{:?}", st.token),
+                    });
+                }
+                None => {
+                    return Err(ParseError::UnexpectedEof {
+                        expected: "integer".to_string(),
+                    });
+                }
+            }
+        } else {
+            None
+        };
 
         Ok(Field {
             name,
             ty,
             annotations,
+            index,
             span: Some((start, end)),
         })
     }
@@ -776,5 +807,48 @@ mod tests {
         let todo = &schema.dtos[1];
         let user_id_field = &todo.fields[1];
         assert_eq!(user_id_field.references(), Some("User"));
+    }
+
+    #[test]
+    fn test_parse_field_index() {
+        let schema = parse(
+            r#"
+            dto User {
+                id: uuid = 1
+                name: string = 2
+                email: string? = 10
+                tags: []string = 20
+            }
+        "#,
+        )
+        .unwrap();
+
+        let dto = &schema.dtos[0];
+        assert_eq!(dto.fields.len(), 4);
+        assert_eq!(dto.fields[0].name, "id");
+        assert_eq!(dto.fields[0].index, Some(1));
+        assert_eq!(dto.fields[1].name, "name");
+        assert_eq!(dto.fields[1].index, Some(2));
+        assert_eq!(dto.fields[2].name, "email");
+        assert_eq!(dto.fields[2].index, Some(10));
+        assert_eq!(dto.fields[3].name, "tags");
+        assert_eq!(dto.fields[3].index, Some(20));
+    }
+
+    #[test]
+    fn test_parse_field_without_index() {
+        let schema = parse(
+            r#"
+            dto User {
+                id: uuid
+                name: string
+            }
+        "#,
+        )
+        .unwrap();
+
+        let dto = &schema.dtos[0];
+        assert_eq!(dto.fields[0].index, None);
+        assert_eq!(dto.fields[1].index, None);
     }
 }

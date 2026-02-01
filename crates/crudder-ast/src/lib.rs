@@ -144,6 +144,8 @@ pub struct Field {
     pub ty: TypeRef,
     /// Annotations on this field (e.g., `@primary`, `@column`).
     pub annotations: Vec<Annotation>,
+    /// Optional field index for binary serialization formats (e.g., protobuf).
+    pub index: Option<u32>,
     /// Source span for error reporting (start, end).
     pub span: Option<(usize, usize)>,
 }
@@ -357,6 +359,7 @@ mod tests {
                 Annotation::new("primary"),
                 Annotation::new("auto"),
             ],
+            index: None,
             span: None,
         };
 
@@ -371,6 +374,7 @@ mod tests {
             name: "createdAt".to_string(),
             ty: TypeRef::Primitive(PrimitiveType::Timestamp),
             annotations: vec![Annotation::with_args("column", vec!["created_at".to_string()])],
+            index: None,
             span: None,
         };
 

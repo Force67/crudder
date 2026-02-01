@@ -61,6 +61,21 @@ Modifiers can be combined:
 [][]int        # nested array of integers
 ```
 
+## Field Indices
+
+Fields can have explicit indices for binary serialization formats (like protobuf). Use `= <number>` after the type:
+
+```crudder
+dto User {
+    id: uuid = 1
+    name: string = 2
+    email: string? = 3
+    tags: []string = 10
+}
+```
+
+Field indices enable forward compatibility - you can add new fields with new indices without breaking existing serialized data. If no index is specified, indices are auto-generated based on field position (1-indexed).
+
 ## Usage in DTOs
 
 Types are used to define fields in Data Transfer Objects:

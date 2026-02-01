@@ -79,7 +79,8 @@ fn generate_message(dto: &Dto) -> String {
     for (i, field) in dto.fields.iter().enumerate() {
         let proto_type = type_ref_to_proto(&field.ty);
         let field_name = to_snake_case(&field.name);
-        let field_number = i + 1;
+        // Use explicit index if provided, otherwise auto-generate based on position
+        let field_number = field.index.unwrap_or((i + 1) as u32);
 
         // Handle optional fields
         if matches!(&field.ty, TypeRef::Optional(_)) {
@@ -194,12 +195,14 @@ mod tests {
                     name: "id".to_string(),
                     ty: TypeRef::Primitive(PrimitiveType::Uuid),
                     annotations: vec![],
+                    index: None,
                     span: None,
                 },
                 Field {
                     name: "name".to_string(),
                     ty: TypeRef::Primitive(PrimitiveType::String),
                     annotations: vec![],
+                    index: None,
                     span: None,
                 },
             ],
@@ -211,6 +214,36 @@ mod tests {
         assert!(code.contains("message User"));
         assert!(code.contains("string id = 1"));
         assert!(code.contains("string name = 2"));
+    }
+
+    #[test]
+    fn test_generate_message_with_explicit_indices() {
+        let dto = Dto {
+            name: "User".to_string(),
+            fields: vec![
+                Field {
+                    name: "id".to_string(),
+                    ty: TypeRef::Primitive(PrimitiveType::Uuid),
+                    annotations: vec![],
+                    index: Some(10),
+                    span: None,
+                },
+                Field {
+                    name: "name".to_string(),
+                    ty: TypeRef::Primitive(PrimitiveType::String),
+                    annotations: vec![],
+                    index: Some(20),
+                    span: None,
+                },
+            ],
+            annotations: vec![],
+            span: None,
+        };
+
+        let code = generate_message(&dto);
+        assert!(code.contains("message User"));
+        assert!(code.contains("string id = 10"));
+        assert!(code.contains("string name = 20"));
     }
 
     #[test]

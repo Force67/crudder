@@ -75,6 +75,13 @@ pub enum Token {
     #[token(",")]
     Comma,
 
+    #[token("=")]
+    Equals,
+
+    // Integer literals (for field indices)
+    #[regex(r"[0-9]+", |lex| lex.slice().parse::<u32>().ok())]
+    IntLiteral(u32),
+
     // String literals (for annotation arguments)
     #[regex(r#""([^"\\]|\\.)*""#, |lex| {
         let s = lex.slice();
@@ -179,8 +186,8 @@ mod tests {
 
     #[test]
     fn test_symbols() {
-        let tokens: Vec<_> = lex("{ } ( ) [ ] -> : ? @ ,").unwrap();
-        assert_eq!(tokens.len(), 11);
+        let tokens: Vec<_> = lex("{ } ( ) [ ] -> : ? @ , =").unwrap();
+        assert_eq!(tokens.len(), 12);
         assert_eq!(tokens[0].token, Token::LBrace);
         assert_eq!(tokens[1].token, Token::RBrace);
         assert_eq!(tokens[2].token, Token::LParen);
@@ -192,6 +199,19 @@ mod tests {
         assert_eq!(tokens[8].token, Token::Question);
         assert_eq!(tokens[9].token, Token::At);
         assert_eq!(tokens[10].token, Token::Comma);
+        assert_eq!(tokens[11].token, Token::Equals);
+    }
+
+    #[test]
+    fn test_int_literal() {
+        let tokens: Vec<_> = lex("= 1 = 42 = 100").unwrap();
+        assert_eq!(tokens.len(), 6);
+        assert_eq!(tokens[0].token, Token::Equals);
+        assert_eq!(tokens[1].token, Token::IntLiteral(1));
+        assert_eq!(tokens[2].token, Token::Equals);
+        assert_eq!(tokens[3].token, Token::IntLiteral(42));
+        assert_eq!(tokens[4].token, Token::Equals);
+        assert_eq!(tokens[5].token, Token::IntLiteral(100));
     }
 
     #[test]
