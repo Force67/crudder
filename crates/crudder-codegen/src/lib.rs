@@ -1,14 +1,37 @@
 //! Code generation backends for the Crudder DSL.
+//!
+//! This crate provides a pass-based code generation architecture where:
+//! 1. A base pass generates pure, library-agnostic code
+//! 2. Feature passes (Zod, Express, Axum, SQLx) are independent modules that enhance the output
+//! 3. Passes can be composed in any order via the PassManager
+//!
+//! # Example
+//!
+//! ```ignore
+//! use crudder_codegen::pass::PassManager;
+//! use crudder_codegen::typescript::{TypeScriptBasePass, passes::{ZodPass, ExpressPass}};
+//!
+//! let mut pm = PassManager::new();
+//! pm.add(TypeScriptBasePass);
+//! pm.add(ZodPass);
+//! pm.add(ExpressPass);
+//!
+//! let files = pm.run(&schema)?;
+//! ```
 
 use std::path::PathBuf;
 
 use crudder_ast::Schema;
 use thiserror::Error;
 
+// Pass-based modules
+pub mod pass;
 pub mod protobuf;
 pub mod rust;
-pub mod sqlx;
 pub mod typescript;
+
+// Re-export pass types
+pub use pass::{GenerationContext, Pass, PassManager};
 
 /// Errors that can occur during code generation.
 #[derive(Error, Debug)]
@@ -63,6 +86,7 @@ impl GeneratedFiles {
     /// Writes all files to the given output directory.
     pub fn write_to(&self, output_dir: &std::path::Path) -> Result<(), std::io::Error> {
         for file in &self.files {
+            validate_relative_path(&file.path)?;
             let path = output_dir.join(&file.path);
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -71,6 +95,32 @@ impl GeneratedFiles {
         }
         Ok(())
     }
+}
+
+fn validate_relative_path(path: &std::path::Path) -> Result<(), std::io::Error> {
+    use std::path::Component;
+
+    if path.is_absolute() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("generated file path must be relative: {}", path.display()),
+        ));
+    }
+
+    for component in path.components() {
+        match component {
+            Component::Normal(_) => {}
+            // Disallow `..`, `.`, prefixes, and root dirs to prevent escaping `output_dir`.
+            Component::ParentDir | Component::CurDir | Component::Prefix(_) | Component::RootDir => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::InvalidInput,
+                    format!("generated file path must be a normal relative path: {}", path.display()),
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Trait for code generators.
@@ -82,19 +132,13 @@ pub trait CodeGenerator {
     fn name(&self) -> &'static str;
 }
 
-/// Available code generation targets.
+/// Available code generation targets (legacy API).
+///
+/// For Rust and TypeScript, use [`PassManager`] with the appropriate passes instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Target {
-    /// Basic Rust with stub handlers.
-    Rust,
-    /// TypeScript types and client.
-    TypeScript,
     /// Protobuf definitions.
     Protobuf,
-    /// Rust with SQLx Postgres (full CRUD implementation).
-    SqlxPostgres,
-    /// Rust with SQLx SQLite (full CRUD implementation).
-    SqlxSqlite,
 }
 
 impl std::str::FromStr for Target {
@@ -102,11 +146,7 @@ impl std::str::FromStr for Target {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "rust" => Ok(Target::Rust),
-            "typescript" | "ts" => Ok(Target::TypeScript),
             "protobuf" | "proto" => Ok(Target::Protobuf),
-            "sqlx-postgres" | "postgres" | "pg" => Ok(Target::SqlxPostgres),
-            "sqlx-sqlite" | "sqlite" => Ok(Target::SqlxSqlite),
             _ => Err(format!("unknown target: {s}")),
         }
     }
@@ -115,22 +155,17 @@ impl std::str::FromStr for Target {
 impl std::fmt::Display for Target {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Target::Rust => write!(f, "rust"),
-            Target::TypeScript => write!(f, "typescript"),
             Target::Protobuf => write!(f, "protobuf"),
-            Target::SqlxPostgres => write!(f, "sqlx-postgres"),
-            Target::SqlxSqlite => write!(f, "sqlx-sqlite"),
         }
     }
 }
 
 /// Creates a code generator for the given target.
+///
+/// For Rust and TypeScript code generation, use [`PassManager`] with the
+/// appropriate passes instead. See the crate documentation for examples.
 pub fn generator_for(target: Target) -> Box<dyn CodeGenerator> {
     match target {
-        Target::Rust => Box::new(rust::RustGenerator::new()),
-        Target::TypeScript => Box::new(typescript::TypeScriptGenerator::new()),
         Target::Protobuf => Box::new(protobuf::ProtobufGenerator::new()),
-        Target::SqlxPostgres => Box::new(sqlx::SqlxGenerator::postgres()),
-        Target::SqlxSqlite => Box::new(sqlx::SqlxGenerator::sqlite()),
     }
 }

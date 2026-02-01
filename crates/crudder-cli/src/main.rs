@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use crudder_codegen::{generator_for, Target};
+use crudder_codegen::{generator_for, PassManager, Target};
 use crudder_parser::parse;
 
 #[derive(Parser)]
@@ -21,13 +21,19 @@ enum Commands {
         /// Input .crudder file
         input: PathBuf,
 
-        /// Target language (rust, typescript, protobuf)
+        /// Target language (rust, typescript, protobuf, sqlx-postgres, sqlx-sqlite)
         #[arg(short, long)]
         target: String,
 
         /// Output directory
         #[arg(short, long)]
         output: PathBuf,
+
+        /// Feature passes to include (comma-separated)
+        /// TypeScript: zod, express, client
+        /// Rust: serde, axum, sqlx-postgres, sqlx-sqlite
+        #[arg(long, value_delimiter = ',')]
+        with: Vec<String>,
     },
 
     /// Validate a .crudder file without generating code
@@ -55,7 +61,8 @@ fn main() {
             input,
             target,
             output,
-        } => run_generate(&input, &target, &output),
+            with,
+        } => run_generate(&input, &target, &output, &with),
         Commands::Check { input } => run_check(&input),
         Commands::Fmt { input, write } => run_fmt(&input, write),
     };
@@ -66,7 +73,92 @@ fn main() {
     }
 }
 
-fn run_generate(input: &PathBuf, target: &str, output: &PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+/// Builds a PassManager based on target and feature flags.
+///
+/// Dependencies are automatically included:
+/// - Rust: `axum` requires `serde`, `sqlx-*` requires `serde` + `axum`
+fn build_pass_manager(target: &str, features: &[String]) -> Result<PassManager, String> {
+    let mut pm = PassManager::new();
+
+    match target.to_lowercase().as_str() {
+        // New pass-based targets
+        "typescript" | "ts" => {
+            pm.add(crudder_codegen::typescript::TypeScriptBasePass);
+
+            for feature in features {
+                match feature.to_lowercase().as_str() {
+                    "zod" => {
+                        pm.add(crudder_codegen::typescript::passes::ZodPass);
+                    }
+                    "express" => {
+                        pm.add(crudder_codegen::typescript::passes::ExpressPass);
+                    }
+                    "client" => {
+                        pm.add(crudder_codegen::typescript::passes::ClientPass);
+                    }
+                    _ => return Err(format!("unknown TypeScript feature: {}", feature)),
+                }
+            }
+        }
+        "rust" => {
+            pm.add(crudder_codegen::rust::RustBasePass);
+
+            // Normalize features to lowercase for checking
+            let features_lower: Vec<String> = features.iter().map(|f| f.to_lowercase()).collect();
+
+            // Determine which passes are needed (including implicit dependencies)
+            let needs_sqlx_pg = features_lower.iter().any(|f| matches!(f.as_str(), "sqlx-postgres" | "postgres" | "pg"));
+            let needs_sqlx_sqlite = features_lower.iter().any(|f| matches!(f.as_str(), "sqlx-sqlite" | "sqlite"));
+            let needs_axum = features_lower.contains(&"axum".to_string()) || needs_sqlx_pg || needs_sqlx_sqlite;
+            let needs_serde = features_lower.contains(&"serde".to_string()) || needs_axum;
+
+            // Add passes in dependency order
+            if needs_serde {
+                pm.add(crudder_codegen::rust::passes::SerdePass);
+            }
+            if needs_axum {
+                pm.add(crudder_codegen::rust::passes::AxumPass);
+            }
+            if needs_sqlx_pg {
+                pm.add(crudder_codegen::rust::passes::SqlxPass::postgres());
+            }
+            if needs_sqlx_sqlite {
+                pm.add(crudder_codegen::rust::passes::SqlxPass::sqlite());
+            }
+
+            // Check for unknown features
+            for feature in &features_lower {
+                match feature.as_str() {
+                    "serde" | "axum" | "sqlx-postgres" | "postgres" | "pg" | "sqlx-sqlite" | "sqlite" => {}
+                    _ => return Err(format!("unknown Rust feature: {}", feature)),
+                }
+            }
+        }
+        // Backward compat: compound targets
+        "sqlx-postgres" | "postgres" | "pg" => {
+            pm.add(crudder_codegen::rust::RustBasePass);
+            pm.add(crudder_codegen::rust::passes::SerdePass);
+            pm.add(crudder_codegen::rust::passes::AxumPass);
+            pm.add(crudder_codegen::rust::passes::SqlxPass::postgres());
+        }
+        "sqlx-sqlite" | "sqlite" => {
+            pm.add(crudder_codegen::rust::RustBasePass);
+            pm.add(crudder_codegen::rust::passes::SerdePass);
+            pm.add(crudder_codegen::rust::passes::AxumPass);
+            pm.add(crudder_codegen::rust::passes::SqlxPass::sqlite());
+        }
+        _ => return Err(format!("unknown target: {}", target)),
+    }
+
+    Ok(pm)
+}
+
+fn run_generate(
+    input: &PathBuf,
+    target: &str,
+    output: &PathBuf,
+    features: &[String],
+) -> Result<(), Box<dyn std::error::Error>> {
     let source = std::fs::read_to_string(input)?;
     let filename = input.display().to_string();
 
@@ -78,10 +170,21 @@ fn run_generate(input: &PathBuf, target: &str, output: &PathBuf) -> Result<(), B
         }
     };
 
-    let target: Target = target.parse().map_err(|e: String| e)?;
-    let generator = generator_for(target);
+    // Check if we should use the new pass-based system or legacy generators
+    let use_pass_manager = matches!(
+        target.to_lowercase().as_str(),
+        "typescript" | "ts" | "rust" | "sqlx-postgres" | "postgres" | "pg" | "sqlx-sqlite" | "sqlite"
+    );
 
-    let files = generator.generate(&schema)?;
+    let files = if use_pass_manager {
+        let pm = build_pass_manager(target, features).map_err(|e| e)?;
+        pm.run(&schema)?
+    } else {
+        // Fall back to legacy generators for protobuf
+        let target: Target = target.parse().map_err(|e: String| e)?;
+        let generator = generator_for(target);
+        generator.generate(&schema)?
+    };
 
     std::fs::create_dir_all(output)?;
     files.write_to(output)?;

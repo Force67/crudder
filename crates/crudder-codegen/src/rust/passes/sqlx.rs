@@ -1,85 +1,169 @@
-//! SQLx Postgres code generator with complete CRUD implementations.
+//! SQLx database pass for Rust.
 
-use crudder_ast::{AuthRequirement, Dto, Field, Method, PrimitiveType, Schema, Service, StorageType, TypeRef};
+use crudder_ast::{
+    AuthRequirement, Dto, Method, PrimitiveType, Schema, Service, StorageType, TypeRef,
+};
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use crate::{CodeGenerator, CodegenError, GeneratedFile, GeneratedFiles};
+use crate::pass::{GenerationContext, Pass};
+use crate::rust::base::to_snake_case;
+use crate::CodegenError;
 
-/// SQLx Postgres code generator.
-pub struct SqlxGenerator {
-    /// The storage type (Postgres or Sqlite).
-    pub storage_type: StorageType,
+/// SQLx pass that generates database handlers with full CRUD implementations.
+///
+/// This pass creates handler files for each service with complete SQL queries,
+/// an auth module, and database migrations.
+///
+/// It depends on `rust-base`, `serde`, and `axum` passes.
+pub struct SqlxPass {
+    /// The storage type (Postgres or SQLite).
+    pub storage: StorageType,
 }
 
-impl SqlxGenerator {
-    /// Creates a new SQLx generator for Postgres.
+impl SqlxPass {
+    /// Creates a new SQLx pass for Postgres.
     pub fn postgres() -> Self {
         Self {
-            storage_type: StorageType::Postgres,
+            storage: StorageType::Postgres,
         }
     }
 
-    /// Creates a new SQLx generator for SQLite.
+    /// Creates a new SQLx pass for SQLite.
     pub fn sqlite() -> Self {
         Self {
-            storage_type: StorageType::Sqlite,
+            storage: StorageType::Sqlite,
         }
     }
 }
 
-impl CodeGenerator for SqlxGenerator {
-    fn generate(&self, schema: &Schema) -> Result<GeneratedFiles, CodegenError> {
-        let mut files = GeneratedFiles::new();
-
-        // Generate auth module
-        let auth_code = generate_auth_module();
-        files.add(GeneratedFile::new("src/auth.rs", auth_code));
-
-        // Generate types module (entities with sqlx::FromRow)
-        let types_code = generate_types(schema);
-        files.add(GeneratedFile::new("src/types.rs", types_code));
-
-        // Generate handlers for each service
-        for service in &schema.services {
-            let storage = service.storage_type().unwrap_or(self.storage_type);
-            let handlers_code = generate_service_handlers(service, schema, storage)?;
-            let filename = format!("src/{}.rs", to_snake_case(&service.name));
-            files.add(GeneratedFile::new(filename, handlers_code));
-        }
-
-        // Generate main lib.rs
-        let lib_code = generate_lib(&schema.services);
-        files.add(GeneratedFile::new("src/lib.rs", lib_code));
-
-        // Generate migrations
-        let migrations = generate_migrations(schema);
-        for (i, migration) in migrations.iter().enumerate() {
-            let filename = format!("migrations/{:03}_{}.sql", i + 1, migration.0);
-            files.add(GeneratedFile::new(filename, migration.1.clone()));
-        }
-
-        // Generate Cargo.toml
-        files.add(GeneratedFile::new(
-            "Cargo.toml",
-            generate_cargo_toml(self.storage_type),
-        ));
-
-        Ok(files)
-    }
-
+impl Pass for SqlxPass {
     fn name(&self) -> &'static str {
-        match self.storage_type {
+        match self.storage {
             StorageType::Postgres => "sqlx-postgres",
             StorageType::Sqlite => "sqlx-sqlite",
             StorageType::Memory => "memory",
         }
     }
+
+    fn depends_on(&self) -> &[&'static str] {
+        &["rust-base", "serde", "axum"]
+    }
+
+    fn run(&self, schema: &Schema, ctx: &mut GenerationContext) -> Result<(), CodegenError> {
+        // Add FromRow derive to entity DTOs (those with @table)
+        for dto in &schema.dtos {
+            if dto.is_entity() {
+                ctx.add_derive(&dto.name, "sqlx::FromRow");
+            }
+        }
+
+        // Regenerate types with FromRow derives
+        regenerate_types(schema, ctx)?;
+
+        // Generate auth module
+        let auth_code = generate_auth_module();
+        ctx.set_file("src/auth.rs", auth_code);
+
+        // Generate service handlers with SQL queries (overwrites axum stubs)
+        for service in &schema.services {
+            let storage = service.storage_type().unwrap_or(self.storage);
+            let handlers = generate_sqlx_handlers(service, schema, storage)?;
+            let filename = format!("src/{}.rs", to_snake_case(&service.name));
+            ctx.set_file(&filename, handlers);
+        }
+
+        // Update lib.rs to include auth module
+        let lib_code = generate_lib(&schema.services)?;
+        ctx.set_file("src/lib.rs", lib_code);
+
+        // Generate migrations
+        let migrations = generate_migrations(schema, self.storage);
+        for (i, (name, sql)) in migrations.iter().enumerate() {
+            ctx.set_file(&format!("migrations/{:03}_{}.sql", i + 1, name), sql.clone());
+        }
+
+        // Add SQLx dependencies
+        let db_feature = match self.storage {
+            StorageType::Postgres => "postgres",
+            StorageType::Sqlite => "sqlite",
+            StorageType::Memory => "",
+        };
+        ctx.set_metadata(
+            "cargo:dep:sqlx",
+            &format!(
+                "{{ version = \"0.8\", features = [\"runtime-tokio\", \"{}\", \"uuid\", \"chrono\"] }}",
+                db_feature
+            ),
+        );
+        ctx.set_metadata(
+            "cargo:dep:tower-http",
+            "{ version = \"0.6\", features = [\"cors\"] }",
+        );
+
+        // Signal that SQLx is available
+        ctx.set_metadata("has:sqlx", "true");
+        ctx.set_metadata("sqlx:storage", db_feature);
+
+        Ok(())
+    }
 }
 
-/// Generates the types module with DTOs that derive sqlx::FromRow for entities.
-fn generate_types(schema: &Schema) -> String {
-    let dto_structs: Vec<TokenStream> = schema.dtos.iter().map(generate_dto_struct).collect();
+/// Regenerate the types.rs file with updated derives.
+fn regenerate_types(schema: &Schema, ctx: &mut GenerationContext) -> Result<(), CodegenError> {
+    use crate::rust::base::type_ref_to_rust;
+
+    fn generate_dto_struct(dto: &Dto, ctx: &GenerationContext) -> TokenStream {
+        let name = format_ident!("{}", dto.name);
+        let fields: Vec<TokenStream> = dto
+            .fields
+            .iter()
+            .map(|f| {
+                let field_name = format_ident!("{}", to_snake_case(&f.name));
+                let ty = type_ref_to_rust(&f.ty);
+                let original_name = &f.name;
+                let snake_name = to_snake_case(original_name);
+
+                if snake_name != *original_name {
+                    quote! {
+                        #[serde(rename = #original_name)]
+                        pub #field_name: #ty,
+                    }
+                } else {
+                    quote! {
+                        pub #field_name: #ty,
+                    }
+                }
+            })
+            .collect();
+
+        // Get derives from context
+        let derives: Vec<TokenStream> = ctx
+            .get_derives(&dto.name)
+            .unwrap_or(&[])
+            .iter()
+            .map(|d| {
+                let derive_path: TokenStream = d.parse().unwrap_or_else(|_| {
+                    let ident = format_ident!("{}", d);
+                    quote! { #ident }
+                });
+                derive_path
+            })
+            .collect();
+
+        quote! {
+            #[derive(#(#derives),*)]
+            pub struct #name {
+                #(#fields)*
+            }
+        }
+    }
+
+    let dto_structs: Vec<TokenStream> = schema
+        .dtos
+        .iter()
+        .map(|dto| generate_dto_struct(dto, ctx))
+        .collect();
 
     let tokens = quote! {
         //! Generated types from Crudder schema.
@@ -92,86 +176,13 @@ fn generate_types(schema: &Schema) -> String {
         #(#dto_structs)*
     };
 
-    prettyplease::unparse(&syn::parse2(tokens).expect("generated invalid Rust code"))
-}
-
-/// Generates a struct for a DTO.
-fn generate_dto_struct(dto: &Dto) -> TokenStream {
-    let name = format_ident!("{}", dto.name);
-    let fields: Vec<TokenStream> = dto.fields.iter().map(generate_field).collect();
-
-    // If this is an entity (has @table), derive FromRow
-    let derives = if dto.is_entity() {
-        quote! { #[derive(Debug, Clone, Serialize, Deserialize, FromRow)] }
-    } else {
-        quote! { #[derive(Debug, Clone, Serialize, Deserialize)] }
-    };
-
-    quote! {
-        #derives
-        pub struct #name {
-            #(#fields)*
-        }
-    }
-}
-
-/// Generates a struct field with serde rename if needed.
-fn generate_field(field: &Field) -> TokenStream {
-    let name = format_ident!("{}", to_snake_case(&field.name));
-    let ty = type_ref_to_rust(&field.ty);
-
-    let original_name = &field.name;
-    let snake_name = to_snake_case(original_name);
-
-    // Add serde rename if the JSON field name differs from the Rust field name
-    // (SQL columns use snake_case matching the Rust field name, so no sqlx rename needed)
-    if snake_name != *original_name {
-        quote! {
-            #[serde(rename = #original_name)]
-            pub #name: #ty,
-        }
-    } else {
-        quote! {
-            pub #name: #ty,
-        }
-    }
-}
-
-/// Converts a TypeRef to a Rust type.
-fn type_ref_to_rust(ty: &TypeRef) -> TokenStream {
-    match ty {
-        TypeRef::Primitive(p) => primitive_to_rust(p),
-        TypeRef::Array(inner) => {
-            let inner_ty = type_ref_to_rust(inner);
-            quote! { Vec<#inner_ty> }
-        }
-        TypeRef::Optional(inner) => {
-            let inner_ty = type_ref_to_rust(inner);
-            quote! { Option<#inner_ty> }
-        }
-        TypeRef::Named(name) => {
-            let ident = format_ident!("{}", name);
-            quote! { #ident }
-        }
-    }
-}
-
-/// Converts a primitive type to Rust.
-fn primitive_to_rust(p: &PrimitiveType) -> TokenStream {
-    match p {
-        PrimitiveType::String => quote! { String },
-        PrimitiveType::Int => quote! { i64 },
-        PrimitiveType::Float => quote! { f64 },
-        PrimitiveType::Bool => quote! { bool },
-        PrimitiveType::Uuid => quote! { Uuid },
-        PrimitiveType::Cuid2 => quote! { String },
-        PrimitiveType::Timestamp => quote! { DateTime<Utc> },
-        PrimitiveType::Bytes => quote! { Vec<u8> },
-    }
+    let code = crate::rust::format_rust(tokens)?;
+    ctx.set_file("src/types.rs", code);
+    Ok(())
 }
 
 /// Generates handlers for a service with full SQLx implementation.
-fn generate_service_handlers(
+fn generate_sqlx_handlers(
     service: &Service,
     schema: &Schema,
     storage: StorageType,
@@ -191,7 +202,7 @@ fn generate_service_handlers(
     let pool_type = match storage {
         StorageType::Postgres => quote! { sqlx::PgPool },
         StorageType::Sqlite => quote! { sqlx::SqlitePool },
-        StorageType::Memory => quote! { () }, // Shouldn't happen
+        StorageType::Memory => quote! { () },
     };
 
     let tokens = quote! {
@@ -251,16 +262,10 @@ fn generate_service_handlers(
         }
     };
 
-    Ok(prettyplease::unparse(
-        &syn::parse2(tokens).expect("generated invalid Rust code"),
-    ))
+    crate::rust::format_rust(tokens)
 }
 
 /// Finds the entity DTO associated with a method.
-/// This handles cases where:
-/// - The output is the entity itself (e.g., GetTodo -> Todo)
-/// - The output contains an array of entities (e.g., ListTodos -> TodoList { todos: []Todo })
-/// - The method operates on an entity but returns Empty (e.g., DeleteTodo -> Empty)
 fn find_entity_for_method<'a>(method: &Method, schema: &'a Schema) -> Option<&'a Dto> {
     // First, check if output is directly an entity
     if let Some(output_name) = &method.output {
@@ -286,8 +291,9 @@ fn find_entity_for_method<'a>(method: &Method, schema: &'a Schema) -> Option<&'a
     // For Delete methods that return Empty, try to infer entity from method name
     let name = &method.name;
     if name.starts_with("Delete") || name.starts_with("Remove") {
-        // Extract entity name from method (e.g., "DeleteTodo" -> "Todo")
-        let entity_name = name.strip_prefix("Delete").or_else(|| name.strip_prefix("Remove"));
+        let entity_name = name
+            .strip_prefix("Delete")
+            .or_else(|| name.strip_prefix("Remove"));
         if let Some(entity_name) = entity_name {
             if let Some(dto) = schema.get_dto(entity_name) {
                 if dto.is_entity() {
@@ -299,10 +305,9 @@ fn find_entity_for_method<'a>(method: &Method, schema: &'a Schema) -> Option<&'a
 
     // For List methods, try to infer from method name
     if name.starts_with("List") {
-        let entity_name = name.strip_prefix("List").and_then(|s| {
-            // "ListTodos" -> "Todo"
-            s.strip_suffix('s').or(Some(s))
-        });
+        let entity_name = name
+            .strip_prefix("List")
+            .and_then(|s| s.strip_suffix('s').or(Some(s)));
         if let Some(entity_name) = entity_name {
             if let Some(dto) = schema.get_dto(entity_name) {
                 if dto.is_entity() {
@@ -319,10 +324,9 @@ fn find_entity_for_method<'a>(method: &Method, schema: &'a Schema) -> Option<&'a
 fn generate_handler(
     method: &Method,
     schema: &Schema,
-    _storage: StorageType,
+    storage: StorageType,
 ) -> Result<TokenStream, CodegenError> {
     let fn_name = format_ident!("{}", to_snake_case(&method.name));
-    let _input_type = format_ident!("{}", method.input);
 
     let http_method = get_http_method(method);
     let path = get_path(method);
@@ -336,13 +340,20 @@ fn generate_handler(
 
     // Generate handler based on method type
     let (base_params, mut body, return_type) = if let Some(entity) = entity {
-        generate_crud_handler(method, entity, http_method, has_path_param, schema)?
+        generate_crud_handler(
+            method,
+            entity,
+            http_method.as_str(),
+            has_path_param,
+            schema,
+            storage,
+        )?
     } else {
-        generate_stub_handler(method, http_method, has_path_param)
+        generate_stub_handler(method, http_method.as_str(), has_path_param)
     };
 
     // Add auth params and guards based on auth requirement
-    let (auth_params, auth_guard) = generate_auth_guard(&auth_req, entity, has_path_param);
+    let (auth_params, auth_guard) = generate_auth_guard(&auth_req, entity, has_path_param, storage);
 
     // Combine auth guard with body
     if !auth_guard.is_empty() {
@@ -371,30 +382,28 @@ fn generate_auth_guard(
     auth_req: &Option<AuthRequirement>,
     entity: Option<&Dto>,
     has_path_param: bool,
+    storage: StorageType,
 ) -> (TokenStream, TokenStream) {
     match auth_req {
-        Some(AuthRequirement::Public) => {
-            // No auth required
-            (quote! {}, quote! {})
-        }
-        Some(AuthRequirement::Authenticated) => {
-            // Just require authenticated user
-            (quote! { user: crate::auth::AuthenticatedUser }, quote! { let _ = &user; })
-        }
+        Some(AuthRequirement::Public) => (quote! {}, quote! {}),
+        Some(AuthRequirement::Authenticated) => (
+            quote! { user: crate::auth::AuthenticatedUser },
+            quote! { let _ = &user; },
+        ),
         Some(AuthRequirement::Owner(field)) => {
-            // Require authenticated user + ownership check
             let field_ident = format_ident!("{}", to_snake_case(field));
 
-            // For methods with path param (GET/PUT/DELETE by id), we need to fetch first
             if has_path_param {
                 if let Some(entity) = entity {
                     let entity_type = format_ident!("{}", entity.name);
                     let default_table = to_snake_case(&entity.name);
                     let table = entity.table_name().unwrap_or(&default_table);
-                    let pk_col = entity.primary_key()
-                        .map(|f| to_snake_case(&f.name))
+                    let pk_col = entity
+                        .primary_key()
+                        .map(column_name)
                         .unwrap_or_else(|| "id".to_string());
-                    let sql = format!("SELECT * FROM {} WHERE {} = $1", table, pk_col);
+                    let id_param = sql_param(storage, 1);
+                    let sql = format!("SELECT * FROM {} WHERE {} = {}", table, pk_col, id_param);
 
                     return (
                         quote! { user: crate::auth::AuthenticatedUser },
@@ -416,23 +425,23 @@ fn generate_auth_guard(
                 }
             }
 
-            (quote! { user: crate::auth::AuthenticatedUser }, quote! { let _ = &user; })
-        }
-        Some(AuthRequirement::Role(role)) => {
-            // Require authenticated user + role check
             (
                 quote! { user: crate::auth::AuthenticatedUser },
-                quote! {
-                    if !user.has_role(#role) {
-                        return Err((StatusCode::FORBIDDEN, "Insufficient permissions".to_string()));
-                    }
-                },
+                quote! { let _ = &user; },
             )
         }
-        None => {
-            // Default: require authentication (safe default)
-            (quote! { user: crate::auth::AuthenticatedUser }, quote! { let _ = &user; })
-        }
+        Some(AuthRequirement::Role(role)) => (
+            quote! { user: crate::auth::AuthenticatedUser },
+            quote! {
+                if !user.has_role(#role) {
+                    return Err((StatusCode::FORBIDDEN, "Insufficient permissions".to_string()));
+                }
+            },
+        ),
+        None => (
+            quote! { user: crate::auth::AuthenticatedUser },
+            quote! { let _ = &user; },
+        ),
     }
 }
 
@@ -443,11 +452,11 @@ fn generate_crud_handler(
     http_method: &str,
     has_path_param: bool,
     schema: &Schema,
+    storage: StorageType,
 ) -> Result<(TokenStream, TokenStream, TokenStream), CodegenError> {
     let input_type = format_ident!("{}", method.input);
     let output_type = format_ident!("{}", entity.name);
-    let default_table = to_snake_case(&entity.name);
-    let table = entity.table_name().unwrap_or(&default_table);
+    let table = table_name(entity);
     let pk = entity.primary_key();
 
     // Get the input DTO to know what fields we're receiving
@@ -460,9 +469,9 @@ fn generate_crud_handler(
                 .map(|dto| dto.fields.iter().collect())
                 .unwrap_or_default();
 
-            let columns: Vec<_> = insert_fields.iter().map(|f| to_snake_case(&f.name)).collect();
+            let columns: Vec<_> = insert_fields.iter().map(|f| column_name(f)).collect();
             let placeholders: Vec<_> = (1..=insert_fields.len())
-                .map(|i| format!("${}", i))
+                .map(|i| sql_param(storage, i))
                 .collect();
             let binds: Vec<TokenStream> = insert_fields
                 .iter()
@@ -495,8 +504,11 @@ fn generate_crud_handler(
         }
         "GET" if has_path_param => {
             // READ - Get by ID
-            let pk_col = pk.map(|f| to_snake_case(&f.name)).unwrap_or_else(|| "id".to_string());
-            let sql = format!("SELECT * FROM {} WHERE {} = $1", table, pk_col);
+            let pk_col = pk
+                .map(column_name)
+                .unwrap_or_else(|| "id".to_string());
+            let id_param = sql_param(storage, 1);
+            let sql = format!("SELECT * FROM {} WHERE {} = {}", table, pk_col, id_param);
 
             Ok((
                 quote! { State(state): State<AppState>, Path(id): Path<Uuid> },
@@ -534,7 +546,9 @@ fn generate_crud_handler(
         }
         "PUT" => {
             // UPDATE - Update by ID using input DTO fields
-            let pk_col = pk.map(|f| to_snake_case(&f.name)).unwrap_or_else(|| "id".to_string());
+            let pk_col = pk
+                .map(column_name)
+                .unwrap_or_else(|| "id".to_string());
 
             // Use input DTO fields for the update
             let update_fields: Vec<_> = input_dto
@@ -545,16 +559,19 @@ fn generate_crud_handler(
                 .iter()
                 .enumerate()
                 .map(|(i, f)| {
-                    let col = to_snake_case(&f.name);
-                    format!("{} = COALESCE(${}, {})", col, i + 2, col)
+                    let col = column_name(f);
+                    let param = sql_param(storage, i + 2);
+                    format!("{} = COALESCE({}, {})", col, param, col)
                 })
                 .collect();
 
+            let id_param = sql_param(storage, 1);
             let sql = format!(
-                "UPDATE {} SET {} WHERE {} = $1 RETURNING *",
+                "UPDATE {} SET {} WHERE {} = {} RETURNING *",
                 table,
                 set_clauses.join(", "),
-                pk_col
+                pk_col,
+                id_param
             );
 
             let binds: Vec<TokenStream> = update_fields
@@ -583,8 +600,11 @@ fn generate_crud_handler(
         }
         "DELETE" => {
             // DELETE - Delete by ID
-            let pk_col = pk.map(|f| to_snake_case(&f.name)).unwrap_or_else(|| "id".to_string());
-            let sql = format!("DELETE FROM {} WHERE {} = $1", table, pk_col);
+            let pk_col = pk
+                .map(column_name)
+                .unwrap_or_else(|| "id".to_string());
+            let id_param = sql_param(storage, 1);
+            let sql = format!("DELETE FROM {} WHERE {} = {}", table, pk_col, id_param);
 
             Ok((
                 quote! { State(state): State<AppState>, Path(id): Path<Uuid> },
@@ -652,7 +672,7 @@ fn generate_route(method: &Method) -> TokenStream {
 
     let axum_path = path.replace('{', ":").replace('}', "");
 
-    let method_fn = match http_method {
+    let method_fn = match http_method.as_str() {
         "POST" => quote! { post },
         "PUT" => quote! { put },
         "DELETE" => quote! { delete },
@@ -664,8 +684,8 @@ fn generate_route(method: &Method) -> TokenStream {
     }
 }
 
-/// Generates the lib.rs file.
-fn generate_lib(services: &[Service]) -> String {
+/// Generates the lib.rs file with auth module.
+fn generate_lib(services: &[Service]) -> Result<String, CodegenError> {
     let modules: Vec<TokenStream> = services
         .iter()
         .map(|s| {
@@ -707,16 +727,16 @@ fn generate_lib(services: &[Service]) -> String {
         }
     };
 
-    prettyplease::unparse(&syn::parse2(tokens).expect("generated invalid Rust code"))
+    crate::rust::format_rust(tokens)
 }
 
 /// Generates SQL migrations for all entities.
-fn generate_migrations(schema: &Schema) -> Vec<(String, String)> {
+fn generate_migrations(schema: &Schema, storage: StorageType) -> Vec<(String, String)> {
     let mut migrations = Vec::new();
 
     for dto in schema.entities() {
-        let table = dto.table_name().unwrap();
-        let create_sql = generate_create_table(dto);
+        let table = table_name(dto);
+        let create_sql = generate_create_table(dto, schema, storage);
         migrations.push((format!("create_{}", table), create_sql));
     }
 
@@ -724,15 +744,14 @@ fn generate_migrations(schema: &Schema) -> Vec<(String, String)> {
 }
 
 /// Generates CREATE TABLE SQL for a DTO.
-fn generate_create_table(dto: &Dto) -> String {
-    let table = dto.table_name().unwrap();
+fn generate_create_table(dto: &Dto, schema: &Schema, storage: StorageType) -> String {
+    let table = table_name(dto);
     let mut columns = Vec::new();
     let mut constraints = Vec::new();
 
     for field in &dto.fields {
-        // Use snake_case for SQL column names
-        let col_name = to_snake_case(&field.name);
-        let sql_type = type_to_sql(&field.ty);
+        let col_name = column_name(field);
+        let sql_type = type_to_sql(storage, &field.ty);
         let is_optional = matches!(field.ty, TypeRef::Optional(_));
 
         let mut col_def = format!("    {} {}", col_name, sql_type);
@@ -742,7 +761,9 @@ fn generate_create_table(dto: &Dto) -> String {
         }
 
         if field.is_auto() {
-            if matches!(field.ty, TypeRef::Primitive(PrimitiveType::Uuid)) {
+            if matches!(storage, StorageType::Postgres)
+                && matches!(field.ty, TypeRef::Primitive(PrimitiveType::Uuid))
+            {
                 col_def.push_str(" DEFAULT gen_random_uuid()");
             }
         }
@@ -753,19 +774,31 @@ fn generate_create_table(dto: &Dto) -> String {
 
         // Handle timestamp defaults
         if matches!(field.ty, TypeRef::Primitive(PrimitiveType::Timestamp)) && field.is_auto() {
-            col_def.push_str(" DEFAULT NOW()");
+            match storage {
+                StorageType::Postgres => col_def.push_str(" DEFAULT NOW()"),
+                StorageType::Sqlite => col_def.push_str(" DEFAULT CURRENT_TIMESTAMP"),
+                StorageType::Memory => {}
+            }
         }
 
         // Handle boolean defaults
         if matches!(field.ty, TypeRef::Primitive(PrimitiveType::Bool)) && !field.is_primary() {
-            col_def.push_str(" DEFAULT FALSE");
+            match storage {
+                StorageType::Postgres => col_def.push_str(" DEFAULT FALSE"),
+                StorageType::Sqlite => col_def.push_str(" DEFAULT 0"),
+                StorageType::Memory => {}
+            }
         }
 
         columns.push(col_def);
 
         // Handle foreign keys
         if let Some(ref_dto) = field.references() {
-            let ref_table = to_snake_case(ref_dto);
+            let ref_table = schema
+                .get_dto(ref_dto)
+                .and_then(|dto| dto.table_name())
+                .map(ToString::to_string)
+                .unwrap_or_else(|| to_snake_case(ref_dto));
             constraints.push(format!(
                 "    FOREIGN KEY ({}) REFERENCES {}(id)",
                 col_name, ref_table
@@ -785,9 +818,11 @@ fn generate_create_table(dto: &Dto) -> String {
 }
 
 /// Converts a TypeRef to SQL type.
-fn type_to_sql(ty: &TypeRef) -> &'static str {
-    match ty {
-        TypeRef::Primitive(p) => match p {
+fn type_to_sql(storage: StorageType, ty: &TypeRef) -> &'static str {
+    match (storage, ty) {
+        (_, TypeRef::Optional(inner)) => type_to_sql(storage, inner),
+
+        (StorageType::Postgres, TypeRef::Primitive(p)) => match p {
             PrimitiveType::String => "TEXT",
             PrimitiveType::Int => "BIGINT",
             PrimitiveType::Float => "DOUBLE PRECISION",
@@ -797,57 +832,68 @@ fn type_to_sql(ty: &TypeRef) -> &'static str {
             PrimitiveType::Timestamp => "TIMESTAMPTZ",
             PrimitiveType::Bytes => "BYTEA",
         },
-        TypeRef::Optional(inner) => type_to_sql(inner),
-        TypeRef::Array(_) => "JSONB", // Arrays stored as JSON
-        TypeRef::Named(_) => "JSONB", // Nested objects stored as JSON
+        (StorageType::Postgres, TypeRef::Array(_)) => "JSONB",
+        (StorageType::Postgres, TypeRef::Named(_)) => "JSONB",
+
+        (StorageType::Sqlite, TypeRef::Primitive(p)) => match p {
+            PrimitiveType::String => "TEXT",
+            PrimitiveType::Int => "INTEGER",
+            PrimitiveType::Float => "REAL",
+            PrimitiveType::Bool => "INTEGER",
+            PrimitiveType::Uuid => "TEXT",
+            PrimitiveType::Cuid2 => "TEXT",
+            PrimitiveType::Timestamp => "TEXT",
+            PrimitiveType::Bytes => "BLOB",
+        },
+        (StorageType::Sqlite, TypeRef::Array(_)) => "TEXT",
+        (StorageType::Sqlite, TypeRef::Named(_)) => "TEXT",
+
+        // Not meaningful for this pass, but keeps signatures total.
+        (StorageType::Memory, _) => "TEXT",
     }
 }
 
-/// Generates a Cargo.toml for the generated crate.
-fn generate_cargo_toml(storage: StorageType) -> String {
-    let db_feature = match storage {
-        StorageType::Postgres => "postgres",
-        StorageType::Sqlite => "sqlite",
-        StorageType::Memory => "",
-    };
+fn table_name(dto: &Dto) -> String {
+    dto.table_name()
+        .map(ToString::to_string)
+        .unwrap_or_else(|| to_snake_case(&dto.name))
+}
 
-    format!(
-        r#"[package]
-name = "generated-service"
-version = "0.1.0"
-edition = "2021"
+fn column_name(field: &crudder_ast::Field) -> String {
+    field
+        .annotations
+        .iter()
+        .find_map(|a| a.column_name())
+        .map(ToString::to_string)
+        .unwrap_or_else(|| to_snake_case(&field.name))
+}
 
-[dependencies]
-axum = "0.8"
-serde = {{ version = "1", features = ["derive"] }}
-serde_json = "1"
-sqlx = {{ version = "0.8", features = ["runtime-tokio", "{}", "uuid", "chrono"] }}
-uuid = {{ version = "1", features = ["serde", "v4"] }}
-chrono = {{ version = "0.4", features = ["serde"] }}
-tokio = {{ version = "1", features = ["full"] }}
-tower-http = {{ version = "0.6", features = ["cors"] }}
-"#,
-        db_feature
-    )
+fn sql_param(storage: StorageType, idx: usize) -> String {
+    match storage {
+        StorageType::Postgres => format!("${}", idx),
+        StorageType::Sqlite => format!("?{}", idx),
+        StorageType::Memory => format!("${}", idx),
+    }
 }
 
 /// Gets the HTTP method from annotation or infers from method name.
-fn get_http_method(method: &Method) -> &str {
+fn get_http_method(method: &Method) -> String {
     if let Some(ann) = method.annotations.iter().find(|a| a.name == "rest") {
         if let Some(http_method) = ann.args.first() {
-            return http_method.as_str();
+            return http_method.trim().to_uppercase();
         }
     }
 
     let name = &method.name;
-    if name.starts_with("Create") || name.starts_with("Add") {
-        "POST"
-    } else if name.starts_with("Update") || name.starts_with("Set") {
-        "PUT"
-    } else if name.starts_with("Delete") || name.starts_with("Remove") {
-        "DELETE"
+    let lower = name.to_lowercase();
+    if lower.starts_with("create") || lower.starts_with("add") {
+        "POST".to_string()
+    } else if lower.starts_with("update") || lower.starts_with("set") {
+        "PUT".to_string()
+    } else if lower.starts_with("delete") || lower.starts_with("remove") {
+        "DELETE".to_string()
     } else {
-        "GET"
+        "GET".to_string()
     }
 }
 
@@ -860,22 +906,6 @@ fn get_path(method: &Method) -> String {
     }
 
     format!("/{}", to_snake_case(&method.name))
-}
-
-/// Converts a string to snake_case.
-fn to_snake_case(s: &str) -> String {
-    let mut result = String::new();
-    for (i, c) in s.chars().enumerate() {
-        if c.is_uppercase() {
-            if i > 0 {
-                result.push('_');
-            }
-            result.push(c.to_lowercase().next().unwrap());
-        } else {
-            result.push(c);
-        }
-    }
-    result
 }
 
 /// Generates the auth module with pluggable token validation.
@@ -1384,8 +1414,22 @@ mod tests {
 
     #[test]
     fn test_type_to_sql() {
-        assert_eq!(type_to_sql(&TypeRef::Primitive(PrimitiveType::String)), "TEXT");
-        assert_eq!(type_to_sql(&TypeRef::Primitive(PrimitiveType::Int)), "BIGINT");
-        assert_eq!(type_to_sql(&TypeRef::Primitive(PrimitiveType::Uuid)), "UUID");
+        assert_eq!(
+            type_to_sql(StorageType::Postgres, &TypeRef::Primitive(PrimitiveType::String)),
+            "TEXT"
+        );
+        assert_eq!(
+            type_to_sql(StorageType::Postgres, &TypeRef::Primitive(PrimitiveType::Int)),
+            "BIGINT"
+        );
+        assert_eq!(
+            type_to_sql(StorageType::Postgres, &TypeRef::Primitive(PrimitiveType::Uuid)),
+            "UUID"
+        );
+
+        assert_eq!(
+            type_to_sql(StorageType::Sqlite, &TypeRef::Primitive(PrimitiveType::Uuid)),
+            "TEXT"
+        );
     }
 }
