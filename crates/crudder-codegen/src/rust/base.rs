@@ -37,10 +37,7 @@ impl Pass for RustBasePass {
         for service in &schema.services {
             ctx.set_metadata(format!("service:{}", service.name), "true");
             for method in &service.methods {
-                ctx.set_metadata(
-                    format!("method:{}:{}", service.name, method.name),
-                    "true",
-                );
+                ctx.set_metadata(format!("method:{}:{}", service.name, method.name), "true");
             }
         }
 

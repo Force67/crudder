@@ -242,7 +242,11 @@ impl Method {
                 "public" => return Some(AuthRequirement::Public),
                 "authenticated" => return Some(AuthRequirement::Authenticated),
                 "owner" => {
-                    let field = ann.args.first().cloned().unwrap_or_else(|| "user_id".to_string());
+                    let field = ann
+                        .args
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| "user_id".to_string());
                     return Some(AuthRequirement::Owner(field));
                 }
                 "role" => {
@@ -355,10 +359,7 @@ mod tests {
         let field = Field {
             name: "id".to_string(),
             ty: TypeRef::Primitive(PrimitiveType::Uuid),
-            annotations: vec![
-                Annotation::new("primary"),
-                Annotation::new("auto"),
-            ],
+            annotations: vec![Annotation::new("primary"), Annotation::new("auto")],
             index: None,
             span: None,
         };
@@ -373,7 +374,10 @@ mod tests {
         let field = Field {
             name: "createdAt".to_string(),
             ty: TypeRef::Primitive(PrimitiveType::Timestamp),
-            annotations: vec![Annotation::with_args("column", vec!["created_at".to_string()])],
+            annotations: vec![Annotation::with_args(
+                "column",
+                vec!["created_at".to_string()],
+            )],
             index: None,
             span: None,
         };
@@ -399,7 +403,10 @@ mod tests {
         let service = Service {
             name: "TodoService".to_string(),
             methods: vec![],
-            annotations: vec![Annotation::with_args("storage", vec!["postgres".to_string()])],
+            annotations: vec![Annotation::with_args(
+                "storage",
+                vec!["postgres".to_string()],
+            )],
             span: None,
         };
 
@@ -415,7 +422,10 @@ mod tests {
             annotations: vec![Annotation::new("public")],
             span: None,
         };
-        assert_eq!(public_method.auth_requirement(), Some(AuthRequirement::Public));
+        assert_eq!(
+            public_method.auth_requirement(),
+            Some(AuthRequirement::Public)
+        );
         assert!(public_method.is_public());
 
         let owner_method = Method {
@@ -425,7 +435,10 @@ mod tests {
             annotations: vec![Annotation::with_args("owner", vec!["userId".to_string()])],
             span: None,
         };
-        assert_eq!(owner_method.auth_requirement(), Some(AuthRequirement::Owner("userId".to_string())));
+        assert_eq!(
+            owner_method.auth_requirement(),
+            Some(AuthRequirement::Owner("userId".to_string()))
+        );
         assert!(!owner_method.is_public());
 
         let role_method = Method {
@@ -435,6 +448,9 @@ mod tests {
             annotations: vec![Annotation::with_args("role", vec!["admin".to_string()])],
             span: None,
         };
-        assert_eq!(role_method.auth_requirement(), Some(AuthRequirement::Role("admin".to_string())));
+        assert_eq!(
+            role_method.auth_requirement(),
+            Some(AuthRequirement::Role("admin".to_string()))
+        );
     }
 }

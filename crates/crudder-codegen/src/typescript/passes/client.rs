@@ -138,8 +138,10 @@ fn generate_client_method(method: &Method) -> String {
                 param_name = param_name,
                 return_type = return_type,
                 http_method = http_method,
-                path_template =
-                    path.replace(&format!("{{{}}}", param_name), &format!("${{{}}}", param_name))
+                path_template = path.replace(
+                    &format!("{{{}}}", param_name),
+                    &format!("${{{}}}", param_name)
+                )
             )
         } else {
             format!(
@@ -153,8 +155,10 @@ fn generate_client_method(method: &Method) -> String {
                 input_type = input_type,
                 return_type = return_type,
                 http_method = http_method,
-                path_template =
-                    path.replace(&format!("{{{}}}", param_name), &format!("${{{}}}", param_name))
+                path_template = path.replace(
+                    &format!("{{{}}}", param_name),
+                    &format!("${{{}}}", param_name)
+                )
             )
         }
     } else if http_method == "GET" {

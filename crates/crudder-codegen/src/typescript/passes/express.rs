@@ -113,10 +113,7 @@ fn generate_handler_type(method: &Method, has_zod: bool) -> String {
             String::new(),
         ),
         Some(AuthRequirement::Owner(field)) => (
-            format!(
-                "/** @owner({}) - Requires auth + ownership check */",
-                field
-            ),
+            format!("/** @owner({}) - Requires auth + ownership check */", field),
             "AuthenticatedRequest",
             format!(
                 "// NOTE: Call checkOwnership(req.user, resource.{}) after fetching the resource\n",

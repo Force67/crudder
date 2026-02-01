@@ -34,7 +34,7 @@
             # Node.js for TypeScript testing
             nodejs_22
             nodePackages.typescript
-            nodePackages.ts-node
+            # `ts-node` was removed from nixpkgs; Node 22.6+ supports TypeScript directly.
 
             # Testing tools
             curl

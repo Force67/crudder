@@ -111,10 +111,16 @@ fn validate_relative_path(path: &std::path::Path) -> Result<(), std::io::Error> 
         match component {
             Component::Normal(_) => {}
             // Disallow `..`, `.`, prefixes, and root dirs to prevent escaping `output_dir`.
-            Component::ParentDir | Component::CurDir | Component::Prefix(_) | Component::RootDir => {
+            Component::ParentDir
+            | Component::CurDir
+            | Component::Prefix(_)
+            | Component::RootDir => {
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::InvalidInput,
-                    format!("generated file path must be a normal relative path: {}", path.display()),
+                    format!(
+                        "generated file path must be a normal relative path: {}",
+                        path.display()
+                    ),
                 ));
             }
         }

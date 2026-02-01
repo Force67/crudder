@@ -107,9 +107,14 @@ fn build_pass_manager(target: &str, features: &[String]) -> Result<PassManager, 
             let features_lower: Vec<String> = features.iter().map(|f| f.to_lowercase()).collect();
 
             // Determine which passes are needed (including implicit dependencies)
-            let needs_sqlx_pg = features_lower.iter().any(|f| matches!(f.as_str(), "sqlx-postgres" | "postgres" | "pg"));
-            let needs_sqlx_sqlite = features_lower.iter().any(|f| matches!(f.as_str(), "sqlx-sqlite" | "sqlite"));
-            let needs_axum = features_lower.contains(&"axum".to_string()) || needs_sqlx_pg || needs_sqlx_sqlite;
+            let needs_sqlx_pg = features_lower
+                .iter()
+                .any(|f| matches!(f.as_str(), "sqlx-postgres" | "postgres" | "pg"));
+            let needs_sqlx_sqlite = features_lower
+                .iter()
+                .any(|f| matches!(f.as_str(), "sqlx-sqlite" | "sqlite"));
+            let needs_axum =
+                features_lower.contains(&"axum".to_string()) || needs_sqlx_pg || needs_sqlx_sqlite;
             let needs_serde = features_lower.contains(&"serde".to_string()) || needs_axum;
 
             // Add passes in dependency order
@@ -129,7 +134,8 @@ fn build_pass_manager(target: &str, features: &[String]) -> Result<PassManager, 
             // Check for unknown features
             for feature in &features_lower {
                 match feature.as_str() {
-                    "serde" | "axum" | "sqlx-postgres" | "postgres" | "pg" | "sqlx-sqlite" | "sqlite" => {}
+                    "serde" | "axum" | "sqlx-postgres" | "postgres" | "pg" | "sqlx-sqlite"
+                    | "sqlite" => {}
                     _ => return Err(format!("unknown Rust feature: {}", feature)),
                 }
             }
@@ -173,7 +179,14 @@ fn run_generate(
     // Check if we should use the new pass-based system or legacy generators
     let use_pass_manager = matches!(
         target.to_lowercase().as_str(),
-        "typescript" | "ts" | "rust" | "sqlx-postgres" | "postgres" | "pg" | "sqlx-sqlite" | "sqlite"
+        "typescript"
+            | "ts"
+            | "rust"
+            | "sqlx-postgres"
+            | "postgres"
+            | "pg"
+            | "sqlx-sqlite"
+            | "sqlite"
     );
 
     let files = if use_pass_manager {
@@ -311,11 +324,7 @@ fn format_service(service: &crudder_ast::Service) -> String {
             ));
         }
 
-        let return_type = method
-            .output
-            .as_ref()
-            .map(|s| s.as_str())
-            .unwrap_or("void");
+        let return_type = method.output.as_ref().map(|s| s.as_str()).unwrap_or("void");
 
         output.push_str(&format!(
             "    {}({}) -> {}\n",

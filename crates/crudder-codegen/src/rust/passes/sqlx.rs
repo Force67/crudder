@@ -80,7 +80,10 @@ impl Pass for SqlxPass {
         // Generate migrations
         let migrations = generate_migrations(schema, self.storage);
         for (i, (name, sql)) in migrations.iter().enumerate() {
-            ctx.set_file(&format!("migrations/{:03}_{}.sql", i + 1, name), sql.clone());
+            ctx.set_file(
+                &format!("migrations/{:03}_{}.sql", i + 1, name),
+                sql.clone(),
+            );
         }
 
         // Add SQLx dependencies
@@ -504,9 +507,7 @@ fn generate_crud_handler(
         }
         "GET" if has_path_param => {
             // READ - Get by ID
-            let pk_col = pk
-                .map(column_name)
-                .unwrap_or_else(|| "id".to_string());
+            let pk_col = pk.map(column_name).unwrap_or_else(|| "id".to_string());
             let id_param = sql_param(storage, 1);
             let sql = format!("SELECT * FROM {} WHERE {} = {}", table, pk_col, id_param);
 
@@ -546,9 +547,7 @@ fn generate_crud_handler(
         }
         "PUT" => {
             // UPDATE - Update by ID using input DTO fields
-            let pk_col = pk
-                .map(column_name)
-                .unwrap_or_else(|| "id".to_string());
+            let pk_col = pk.map(column_name).unwrap_or_else(|| "id".to_string());
 
             // Use input DTO fields for the update
             let update_fields: Vec<_> = input_dto
@@ -600,9 +599,7 @@ fn generate_crud_handler(
         }
         "DELETE" => {
             // DELETE - Delete by ID
-            let pk_col = pk
-                .map(column_name)
-                .unwrap_or_else(|| "id".to_string());
+            let pk_col = pk.map(column_name).unwrap_or_else(|| "id".to_string());
             let id_param = sql_param(storage, 1);
             let sql = format!("DELETE FROM {} WHERE {} = {}", table, pk_col, id_param);
 
@@ -1415,20 +1412,32 @@ mod tests {
     #[test]
     fn test_type_to_sql() {
         assert_eq!(
-            type_to_sql(StorageType::Postgres, &TypeRef::Primitive(PrimitiveType::String)),
+            type_to_sql(
+                StorageType::Postgres,
+                &TypeRef::Primitive(PrimitiveType::String)
+            ),
             "TEXT"
         );
         assert_eq!(
-            type_to_sql(StorageType::Postgres, &TypeRef::Primitive(PrimitiveType::Int)),
+            type_to_sql(
+                StorageType::Postgres,
+                &TypeRef::Primitive(PrimitiveType::Int)
+            ),
             "BIGINT"
         );
         assert_eq!(
-            type_to_sql(StorageType::Postgres, &TypeRef::Primitive(PrimitiveType::Uuid)),
+            type_to_sql(
+                StorageType::Postgres,
+                &TypeRef::Primitive(PrimitiveType::Uuid)
+            ),
             "UUID"
         );
 
         assert_eq!(
-            type_to_sql(StorageType::Sqlite, &TypeRef::Primitive(PrimitiveType::Uuid)),
+            type_to_sql(
+                StorageType::Sqlite,
+                &TypeRef::Primitive(PrimitiveType::Uuid)
+            ),
             "TEXT"
         );
     }

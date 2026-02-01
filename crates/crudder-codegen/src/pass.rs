@@ -317,7 +317,10 @@ mod tests {
         }
 
         fn run(&self, _schema: &Schema, ctx: &mut GenerationContext) -> Result<(), CodegenError> {
-            ctx.set_file(format!("{}.txt", self.name), format!("Content from {}", self.name));
+            ctx.set_file(
+                format!("{}.txt", self.name),
+                format!("Content from {}", self.name),
+            );
             Ok(())
         }
 
@@ -336,11 +339,17 @@ mod tests {
         assert!(!ctx.has_file("other.ts"));
 
         ctx.add_import("test.ts", "import { z } from 'zod';");
-        assert_eq!(ctx.get_imports("test.ts"), Some(&["import { z } from 'zod';".to_string()][..]));
+        assert_eq!(
+            ctx.get_imports("test.ts"),
+            Some(&["import { z } from 'zod';".to_string()][..])
+        );
 
         ctx.add_derive("User", "Debug");
         ctx.add_derive("User", "Clone");
-        assert_eq!(ctx.get_derives("User"), Some(&["Debug".to_string(), "Clone".to_string()][..]));
+        assert_eq!(
+            ctx.get_derives("User"),
+            Some(&["Debug".to_string(), "Clone".to_string()][..])
+        );
 
         ctx.set_metadata("has:zod", "true");
         assert_eq!(ctx.get_metadata("has:zod"), Some("true"));
@@ -350,20 +359,32 @@ mod tests {
     #[test]
     fn test_pass_manager_simple() {
         let mut pm = PassManager::new();
-        pm.add(TestPass { name: "base", deps: &[] });
+        pm.add(TestPass {
+            name: "base",
+            deps: &[],
+        });
 
         let schema = Schema::new();
         let files = pm.run(&schema).unwrap();
 
         assert_eq!(files.files.len(), 1);
-        assert!(files.files.iter().any(|f| f.path.to_str() == Some("base.txt")));
+        assert!(files
+            .files
+            .iter()
+            .any(|f| f.path.to_str() == Some("base.txt")));
     }
 
     #[test]
     fn test_pass_manager_with_dependencies() {
         let mut pm = PassManager::new();
-        pm.add(TestPass { name: "zod", deps: &["base"] });
-        pm.add(TestPass { name: "base", deps: &[] });
+        pm.add(TestPass {
+            name: "zod",
+            deps: &["base"],
+        });
+        pm.add(TestPass {
+            name: "base",
+            deps: &[],
+        });
 
         let schema = Schema::new();
         let files = pm.run(&schema).unwrap();
@@ -375,8 +396,14 @@ mod tests {
     #[test]
     fn test_pass_manager_circular_dependency() {
         let mut pm = PassManager::new();
-        pm.add(TestPass { name: "a", deps: &["b"] });
-        pm.add(TestPass { name: "b", deps: &["a"] });
+        pm.add(TestPass {
+            name: "a",
+            deps: &["b"],
+        });
+        pm.add(TestPass {
+            name: "b",
+            deps: &["a"],
+        });
 
         let schema = Schema::new();
         let result = pm.run(&schema);

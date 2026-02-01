@@ -30,3 +30,4 @@ Thumbs.db
 result
 result-*
 /tests/security
+/.pg-data
