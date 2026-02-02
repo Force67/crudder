@@ -1,0 +1,13 @@
+[package]
+name = "crudder-lua"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Lua recipe system for Crudder code generation"
+
+[dependencies]
+crudder-ast.workspace = true
+mlua.workspace = true
+thiserror.workspace = true
+dirs = "5"

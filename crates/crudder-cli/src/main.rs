@@ -3,7 +3,7 @@
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
-use crudder_codegen::{generator_for, PassManager, Target};
+use crudder_lua::{RecipeLoader, RecipeRunner};
 use crudder_parser::parse;
 
 #[derive(Parser)]
@@ -16,29 +16,29 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Generate code from a .crudder file
+    /// Generate code from a .crudder file using a recipe
     Generate {
         /// Input .crudder file
+        #[arg(short, long)]
         input: PathBuf,
 
-        /// Target language (rust, typescript, protobuf, sqlx-postgres, sqlx-sqlite)
+        /// Recipe to use (e.g., rust-axum, typescript-react)
         #[arg(short, long)]
-        target: String,
+        recipe: String,
 
         /// Output directory
         #[arg(short, long)]
         output: PathBuf,
 
-        /// Feature passes to include (comma-separated)
-        /// TypeScript: zod, express, client
-        /// Rust: serde, axum, sqlx-postgres, sqlx-sqlite
-        #[arg(long, value_delimiter = ',')]
-        with: Vec<String>,
+        /// Set recipe options (key=value)
+        #[arg(long = "set", value_parser = parse_key_value)]
+        options: Vec<(String, String)>,
     },
 
     /// Validate a .crudder file without generating code
     Check {
         /// Input .crudder file
+        #[arg(short, long)]
         input: PathBuf,
     },
 
@@ -51,6 +51,16 @@ enum Commands {
         #[arg(short, long)]
         write: bool,
     },
+
+    /// List available recipes
+    Recipes,
+}
+
+fn parse_key_value(s: &str) -> Result<(String, String), String> {
+    let pos = s
+        .find('=')
+        .ok_or_else(|| format!("invalid option format: '{}', expected key=value", s))?;
+    Ok((s[..pos].to_string(), s[pos + 1..].to_string()))
 }
 
 fn main() {
@@ -59,12 +69,13 @@ fn main() {
     let result = match cli.command {
         Commands::Generate {
             input,
-            target,
+            recipe,
             output,
-            with,
-        } => run_generate(&input, &target, &output, &with),
+            options,
+        } => run_generate(&input, &recipe, &output, options),
         Commands::Check { input } => run_check(&input),
         Commands::Fmt { input, write } => run_fmt(&input, write),
+        Commands::Recipes => run_list_recipes(),
     };
 
     if let Err(e) = result {
@@ -73,97 +84,11 @@ fn main() {
     }
 }
 
-/// Builds a PassManager based on target and feature flags.
-///
-/// Dependencies are automatically included:
-/// - Rust: `axum` requires `serde`, `sqlx-*` requires `serde` + `axum`
-fn build_pass_manager(target: &str, features: &[String]) -> Result<PassManager, String> {
-    let mut pm = PassManager::new();
-
-    match target.to_lowercase().as_str() {
-        // New pass-based targets
-        "typescript" | "ts" => {
-            pm.add(crudder_codegen::typescript::TypeScriptBasePass);
-
-            for feature in features {
-                match feature.to_lowercase().as_str() {
-                    "zod" => {
-                        pm.add(crudder_codegen::typescript::passes::ZodPass);
-                    }
-                    "express" => {
-                        pm.add(crudder_codegen::typescript::passes::ExpressPass);
-                    }
-                    "client" => {
-                        pm.add(crudder_codegen::typescript::passes::ClientPass);
-                    }
-                    _ => return Err(format!("unknown TypeScript feature: {}", feature)),
-                }
-            }
-        }
-        "rust" => {
-            pm.add(crudder_codegen::rust::RustBasePass);
-
-            // Normalize features to lowercase for checking
-            let features_lower: Vec<String> = features.iter().map(|f| f.to_lowercase()).collect();
-
-            // Determine which passes are needed (including implicit dependencies)
-            let needs_sqlx_pg = features_lower
-                .iter()
-                .any(|f| matches!(f.as_str(), "sqlx-postgres" | "postgres" | "pg"));
-            let needs_sqlx_sqlite = features_lower
-                .iter()
-                .any(|f| matches!(f.as_str(), "sqlx-sqlite" | "sqlite"));
-            let needs_axum =
-                features_lower.contains(&"axum".to_string()) || needs_sqlx_pg || needs_sqlx_sqlite;
-            let needs_serde = features_lower.contains(&"serde".to_string()) || needs_axum;
-
-            // Add passes in dependency order
-            if needs_serde {
-                pm.add(crudder_codegen::rust::passes::SerdePass);
-            }
-            if needs_axum {
-                pm.add(crudder_codegen::rust::passes::AxumPass);
-            }
-            if needs_sqlx_pg {
-                pm.add(crudder_codegen::rust::passes::SqlxPass::postgres());
-            }
-            if needs_sqlx_sqlite {
-                pm.add(crudder_codegen::rust::passes::SqlxPass::sqlite());
-            }
-
-            // Check for unknown features
-            for feature in &features_lower {
-                match feature.as_str() {
-                    "serde" | "axum" | "sqlx-postgres" | "postgres" | "pg" | "sqlx-sqlite"
-                    | "sqlite" => {}
-                    _ => return Err(format!("unknown Rust feature: {}", feature)),
-                }
-            }
-        }
-        // Backward compat: compound targets
-        "sqlx-postgres" | "postgres" | "pg" => {
-            pm.add(crudder_codegen::rust::RustBasePass);
-            pm.add(crudder_codegen::rust::passes::SerdePass);
-            pm.add(crudder_codegen::rust::passes::AxumPass);
-            pm.add(crudder_codegen::rust::passes::SqlxPass::postgres());
-        }
-        "sqlx-sqlite" | "sqlite" => {
-            pm.add(crudder_codegen::rust::RustBasePass);
-            pm.add(crudder_codegen::rust::passes::SerdePass);
-            pm.add(crudder_codegen::rust::passes::AxumPass);
-            pm.add(crudder_codegen::rust::passes::SqlxPass::sqlite());
-        }
-        _ => return Err(format!("unknown target: {}", target)),
-    }
-
-    Ok(pm)
-}
-
 fn run_generate(
     input: &PathBuf,
-    target: &str,
+    recipe_name: &str,
     output: &PathBuf,
-    features: &[String],
+    options: Vec<(String, String)>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let source = std::fs::read_to_string(input)?;
     let filename = input.display().to_string();
@@ -176,39 +101,41 @@ fn run_generate(
         }
     };
 
-    // Check if we should use the new pass-based system or legacy generators
-    let use_pass_manager = matches!(
-        target.to_lowercase().as_str(),
-        "typescript"
-            | "ts"
-            | "rust"
-            | "sqlx-postgres"
-            | "postgres"
-            | "pg"
-            | "sqlx-sqlite"
-            | "sqlite"
+    // Load the recipe
+    let loader = RecipeLoader::new().with_project_dir(
+        input
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| PathBuf::from(".")),
     );
+    let recipe = loader.load(recipe_name)?;
 
-    let files = if use_pass_manager {
-        let pm = build_pass_manager(target, features).map_err(|e| e)?;
-        pm.run(&schema)?
-    } else {
-        // Fall back to legacy generators for protobuf
-        let target: Target = target.parse().map_err(|e: String| e)?;
-        let generator = generator_for(target);
-        generator.generate(&schema)?
-    };
+    // Run the recipe
+    let mut runner = RecipeRunner::new();
+    for (key, value) in options {
+        runner.set_option(key, value);
+    }
 
+    let files = runner.run(&schema, &recipe)?;
+
+    // Write files
     std::fs::create_dir_all(output)?;
-    files.write_to(output)?;
+
+    for file in &files {
+        let path = output.join(&file.path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, &file.content)?;
+    }
 
     println!(
         "Generated {} files to {}",
-        files.files.len(),
+        files.len(),
         output.display()
     );
-    for file in &files.files {
-        println!("  - {}", file.path.display());
+    for file in &files {
+        println!("  - {}", file.path);
     }
 
     Ok(())
@@ -269,6 +196,25 @@ fn run_fmt(input: &PathBuf, write: bool) -> Result<(), Box<dyn std::error::Error
     Ok(())
 }
 
+fn run_list_recipes() -> Result<(), Box<dyn std::error::Error>> {
+    let loader = RecipeLoader::new();
+    let recipes = loader.list_recipes();
+
+    println!("Available recipes:");
+    println!();
+
+    for recipe in recipes {
+        let source = if recipe.builtin {
+            "(built-in)"
+        } else {
+            "(user)"
+        };
+        println!("  {} - {} {}", recipe.name, recipe.description, source);
+    }
+
+    Ok(())
+}
+
 /// Formats a schema back to source code.
 fn format_schema(schema: &crudder_ast::Schema) -> String {
     let mut output = String::new();
@@ -289,14 +235,50 @@ fn format_schema(schema: &crudder_ast::Schema) -> String {
 }
 
 fn format_dto(dto: &crudder_ast::Dto) -> String {
-    let mut output = format!("dto {} {{\n", dto.name);
+    let mut output = String::new();
+
+    // Format annotations
+    for ann in &dto.annotations {
+        output.push_str(&format_annotation(ann));
+        output.push('\n');
+    }
+
+    output.push_str(&format!("dto {} {{\n", dto.name));
 
     for field in &dto.fields {
-        output.push_str(&format!("    {}: {}\n", field.name, format_type(&field.ty)));
+        // Format field annotations
+        for ann in &field.annotations {
+            output.push_str("    ");
+            output.push_str(&format_annotation(ann));
+            output.push(' ');
+        }
+        if !field.annotations.is_empty() {
+            // Remove trailing space, add field on same line
+            output.pop();
+            output.push_str(&format!(" {}: {}\n", field.name, format_type(&field.ty)));
+        } else {
+            output.push_str(&format!("    {}: {}\n", field.name, format_type(&field.ty)));
+        }
     }
 
     output.push_str("}\n");
     output
+}
+
+fn format_annotation(ann: &crudder_ast::Annotation) -> String {
+    if ann.args.is_empty() {
+        format!("@{}", ann.name)
+    } else {
+        format!(
+            "@{}({})",
+            ann.name,
+            ann.args
+                .iter()
+                .map(|a| format!("\"{}\"", a))
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
 }
 
 fn format_type(ty: &crudder_ast::TypeRef) -> String {
@@ -309,19 +291,22 @@ fn format_type(ty: &crudder_ast::TypeRef) -> String {
 }
 
 fn format_service(service: &crudder_ast::Service) -> String {
-    let mut output = format!("service {} {{\n", service.name);
+    let mut output = String::new();
+
+    // Format service annotations
+    for ann in &service.annotations {
+        output.push_str(&format_annotation(ann));
+        output.push('\n');
+    }
+
+    output.push_str(&format!("service {} {{\n", service.name));
 
     for method in &service.methods {
+        // Format method annotations
         for ann in &method.annotations {
-            output.push_str(&format!(
-                "    @{}({})\n",
-                ann.name,
-                ann.args
-                    .iter()
-                    .map(|a| format!("\"{}\"", a))
-                    .collect::<Vec<_>>()
-                    .join(", ")
-            ));
+            output.push_str("    ");
+            output.push_str(&format_annotation(ann));
+            output.push('\n');
         }
 
         let return_type = method.output.as_ref().map(|s| s.as_str()).unwrap_or("void");
@@ -330,6 +315,14 @@ fn format_service(service: &crudder_ast::Service) -> String {
             "    {}({}) -> {}\n",
             method.name, method.input, return_type
         ));
+
+        // Add blank line between methods
+        output.push('\n');
+    }
+
+    // Remove trailing blank line
+    if output.ends_with("\n\n") {
+        output.pop();
     }
 
     output.push_str("}\n");

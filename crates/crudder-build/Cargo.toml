@@ -1,0 +1,12 @@
+[package]
+name = "crudder-build"
+version = "0.1.0"
+edition = "2021"
+description = "Build-time code generation for Crudder schemas"
+license = "MIT"
+
+[dependencies]
+crudder-ast.workspace = true
+crudder-lexer.workspace = true
+crudder-parser.workspace = true
+crudder-lua.workspace = true

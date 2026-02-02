@@ -4,10 +4,11 @@ members = [
     "crates/crudder-ast",
     "crates/crudder-lexer",
     "crates/crudder-parser",
-    "crates/crudder-codegen",
+    "crates/crudder-lua",
+    "crates/crudder-build",
     "crates/crudder-cli",
 ]
-exclude = ["demo"]
+exclude = ["demo", "examples/build-example"]
 
 [workspace.package]
 version = "0.1.0"
@@ -20,14 +21,13 @@ authors = ["Crudder Contributors"]
 crudder-ast = { path = "crates/crudder-ast" }
 crudder-lexer = { path = "crates/crudder-lexer" }
 crudder-parser = { path = "crates/crudder-parser" }
-crudder-codegen = { path = "crates/crudder-codegen" }
+crudder-lua = { path = "crates/crudder-lua" }
+crudder-build = { path = "crates/crudder-build" }
 
 # External dependencies
 logos = "0.14"
 ariadne = "0.4"
 clap = { version = "4", features = ["derive"] }
-quote = "1"
-proc-macro2 = "1"
-syn = { version = "2", features = ["full"] }
-prettyplease = "0.2"
+mlua = { version = "0.10", features = ["lua54", "vendored"] }
 thiserror = "1"
+dirs = "5"
