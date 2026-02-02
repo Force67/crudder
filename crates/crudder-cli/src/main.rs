@@ -101,7 +101,6 @@ fn run_generate(
         }
     };
 
-    // Load the recipe
     let loader = RecipeLoader::new().with_project_dir(
         input
             .parent()
@@ -110,7 +109,6 @@ fn run_generate(
     );
     let recipe = loader.load(recipe_name)?;
 
-    // Run the recipe
     let mut runner = RecipeRunner::new();
     for (key, value) in options {
         runner.set_option(key, value);
@@ -118,7 +116,6 @@ fn run_generate(
 
     let files = runner.run(&schema, &recipe)?;
 
-    // Write files
     std::fs::create_dir_all(output)?;
 
     for file in &files {

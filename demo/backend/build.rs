@@ -8,16 +8,13 @@ fn main() {
     // Re-run if schema changes
     println!("cargo:rerun-if-changed={}", schema_path.display());
 
-    // Parse schema
     let source = std::fs::read_to_string(schema_path).expect("failed to read schema");
     let schema = crudder_parser::parse(&source).expect("failed to parse schema");
 
-    // Generate code
     let generator = crudder_codegen::sqlx::SqlxGenerator::postgres();
     let files = crudder_codegen::CodeGenerator::generate(&generator, &schema)
         .expect("failed to generate code");
 
-    // Write generated files to OUT_DIR
     for file in &files.files {
         let path = Path::new(&out_dir).join(&file.path);
         if let Some(parent) = path.parent() {

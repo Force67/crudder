@@ -67,22 +67,17 @@ impl RecipeRunner {
     pub fn run(&self, schema: &Schema, recipe: &LoadedRecipe) -> Result<Vec<EmittedFile>> {
         let lua = Lua::new();
 
-        // Register helpers
         helpers::register_helpers(&lua)?;
 
-        // Load and evaluate the recipe
         let recipe_table: Table = lua.load(&recipe.source).eval()?;
 
-        // Get the generate function
         let generate: Function = recipe_table.get("generate").map_err(|_| {
             RecipeError::InvalidFormat("recipe missing 'generate' function".to_string())
         })?;
 
-        // Create context and schema
         let ctx = RecipeContext::with_options(self.options.clone());
         let lua_schema = LuaSchema(schema.clone());
 
-        // Call the generate function
         lua.scope(|scope| {
             let ctx_ud = scope.create_userdata(ctx.clone())?;
             let schema_ud = scope.create_userdata(lua_schema)?;
@@ -91,7 +86,6 @@ impl RecipeRunner {
             Ok(())
         })?;
 
-        // Return emitted files
         Ok(ctx.files())
     }
 }
@@ -205,7 +199,6 @@ mod tests {
     fn test_simple_recipe() {
         let schema = create_test_schema();
 
-        // Create a simple test recipe
         let recipe = LoadedRecipe {
             info: RecipeInfo {
                 name: "test".to_string(),

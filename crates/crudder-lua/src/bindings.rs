@@ -125,7 +125,6 @@ impl FromLua for LuaTypeRef {
 
 impl UserData for LuaTypeRef {
     fn add_fields<F: UserDataFields<Self>>(fields: &mut F) {
-        // kind: "primitive", "array", "optional", "named"
         fields.add_field_method_get("kind", |_, this| {
             Ok(match &this.0 {
                 TypeRef::Primitive(_) => "primitive",
@@ -135,7 +134,6 @@ impl UserData for LuaTypeRef {
             })
         });
 
-        // primitive: string name if this is a primitive type
         fields.add_field_method_get("primitive", |_, this| {
             Ok(match &this.0 {
                 TypeRef::Primitive(p) => Some(p.as_str().to_string()),
@@ -143,7 +141,6 @@ impl UserData for LuaTypeRef {
             })
         });
 
-        // inner: the inner type for array/optional
         fields.add_field_method_get("inner", |_, this| {
             Ok(match &this.0 {
                 TypeRef::Array(inner) => Some(LuaTypeRef(*inner.clone())),
@@ -152,7 +149,6 @@ impl UserData for LuaTypeRef {
             })
         });
 
-        // name: the name for named types
         fields.add_field_method_get("name", |_, this| {
             Ok(match &this.0 {
                 TypeRef::Named(name) => Some(name.clone()),
@@ -162,20 +158,16 @@ impl UserData for LuaTypeRef {
     }
 
     fn add_methods<M: UserDataMethods<Self>>(methods: &mut M) {
-        // Helper to get a string representation
         methods.add_method("to_string", |_, this, ()| Ok(type_ref_to_string(&this.0)));
 
-        // is_optional helper
         methods.add_method("is_optional", |_, this, ()| {
             Ok(matches!(&this.0, TypeRef::Optional(_)))
         });
 
-        // is_array helper
         methods.add_method("is_array", |_, this, ()| {
             Ok(matches!(&this.0, TypeRef::Array(_)))
         });
 
-        // Unwrap to get the base type (unwraps optional/array)
         methods.add_method("base_type", |_, this, ()| {
             fn unwrap_type(ty: &TypeRef) -> &TypeRef {
                 match ty {
@@ -287,7 +279,6 @@ impl UserData for LuaMethod {
             }))
         });
 
-        // Get HTTP method from @rest annotation
         methods.add_method("http_method", |_, this, ()| {
             for ann in &this.0.annotations {
                 if ann.name == "rest" {
@@ -299,7 +290,6 @@ impl UserData for LuaMethod {
             Ok(None)
         });
 
-        // Get HTTP path from @rest annotation
         methods.add_method("http_path", |_, this, ()| {
             for ann in &this.0.annotations {
                 if ann.name == "rest" {

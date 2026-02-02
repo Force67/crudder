@@ -129,10 +129,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Connected!");
 
-    // Create your service with the database pool
     let service = MyTodoService::new(pool);
 
-    // Build the router using the generated function
     let app = todo_service_router(service);
 
     let addr = std::net::SocketAddr::from(([127, 0, 0, 1], 3000));

@@ -71,43 +71,33 @@ impl Config {
     pub fn compile<P: AsRef<Path>>(self, schemas: &[P]) -> Result<(), Box<dyn std::error::Error>> {
         let out_dir = std::env::var("OUT_DIR")?;
 
-        // Load the recipe
         let loader = crudder_lua::RecipeLoader::new();
         let recipe = loader.load(&self.recipe)?;
 
         for schema_path in schemas {
             let schema_path = schema_path.as_ref();
 
-            // Tell cargo to rerun if the schema changes
             println!("cargo:rerun-if-changed={}", schema_path.display());
 
-            // Parse the schema
             let source = std::fs::read_to_string(schema_path)?;
             let schema = crudder_parser::parse(&source)
                 .map_err(|e| format!("failed to parse schema: {:?}", e))?;
 
-            // Generate code
             let mut runner = crudder_lua::RecipeRunner::new();
             for (key, value) in &self.options {
                 runner.set_option(key, value);
             }
             let files = runner.run(&schema, &recipe)?;
 
-            // Determine the module name from the schema filename
             let stem = schema_path
                 .file_stem()
                 .and_then(|s| s.to_str())
                 .unwrap_or("schema");
 
-            // Write the generated file(s)
             // The rust-build recipe generates a single file; others may generate multiple
-            for file in &files {
-                if file.path.ends_with(".rs") {
-                    // Use the schema stem as the filename
-                    let out_path = Path::new(&out_dir).join(format!("{}.rs", stem));
-                    std::fs::write(&out_path, &file.content)?;
-                    break; // Only write the first .rs file
-                }
+            if let Some(file) = files.iter().find(|f| f.path.ends_with(".rs")) {
+                let out_path = Path::new(&out_dir).join(format!("{}.rs", stem));
+                std::fs::write(&out_path, &file.content)?;
             }
         }
 

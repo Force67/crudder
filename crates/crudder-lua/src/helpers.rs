@@ -159,7 +159,6 @@ fn trim(_lua: &Lua, s: String) -> Result<String> {
 fn template(_lua: &Lua, (tmpl, vars): (String, mlua::Table)) -> Result<String> {
     let mut result = tmpl;
 
-    // Iterate over all key-value pairs in the table
     for pair in vars.pairs::<String, mlua::Value>() {
         let (key, value) = pair?;
         let value_str = lua_value_to_string(&value);
@@ -390,13 +389,11 @@ impl UserData for LuaLineBuilder {
             Ok(this.clone())
         });
 
-        // Increase indent level
         methods.add_method("indent", |_, this, ()| {
             this.state.borrow_mut().indent_level += 1;
             Ok(this.clone())
         });
 
-        // Decrease indent level
         methods.add_method("dedent", |_, this, ()| {
             let mut state = this.state.borrow_mut();
             if state.indent_level > 0 {
@@ -405,7 +402,6 @@ impl UserData for LuaLineBuilder {
             Ok(this.clone())
         });
 
-        // Set indent string (e.g., "\t" or "  ")
         methods.add_method("set_indent", |_, this, indent: String| {
             this.state.borrow_mut().indent_str = indent;
             Ok(this.clone())
@@ -416,32 +412,26 @@ impl UserData for LuaLineBuilder {
         methods.add_method(
             "block",
             |_lua, this, (open, close, body): (String, String, mlua::Function)| {
-                // Add opening line
                 this.add_line(open);
 
-                // Indent and call body
                 this.state.borrow_mut().indent_level += 1;
                 body.call::<()>(this.clone())?;
                 this.state.borrow_mut().indent_level -= 1;
 
-                // Add closing line
                 this.add_line(close);
 
                 Ok(this.clone())
             },
         );
 
-        // Convert to string
         methods.add_method("build", |_, this, ()| {
             Ok(this.state.borrow().lines.join("\n"))
         });
 
-        // Also support tostring()
         methods.add_meta_method(mlua::MetaMethod::ToString, |_, this, ()| {
             Ok(this.state.borrow().lines.join("\n"))
         });
 
-        // Get line count
         methods.add_method("len", |_, this, ()| Ok(this.state.borrow().lines.len()));
     }
 }

@@ -178,7 +178,6 @@ impl Parser {
         let mut schema = Schema::new();
 
         while !self.at_end() {
-            // Parse any leading annotations
             let annotations = self.parse_annotations()?;
 
             match self.current_token() {
@@ -189,7 +188,6 @@ impl Parser {
                     schema.services.push(self.parse_service(annotations)?);
                 }
                 Some(Token::At) => {
-                    // More annotations - continue collecting
                     continue;
                 }
                 Some(_) => {
@@ -244,7 +242,6 @@ impl Parser {
 
     /// Parses a field definition (with optional annotations).
     fn parse_field(&mut self) -> Result<Field, ParseError> {
-        // Parse field annotations first
         let annotations = self.parse_annotations()?;
 
         let start = annotations
@@ -256,7 +253,6 @@ impl Parser {
         self.expect(Token::Colon)?;
         let (ty, mut end) = self.parse_type()?;
 
-        // Parse optional field index (e.g., `= 1`)
         let index = if matches!(self.current_token(), Some(Token::Equals)) {
             self.advance();
             match self.current() {
@@ -297,7 +293,6 @@ impl Parser {
 
     /// Parses a type reference.
     fn parse_type(&mut self) -> Result<(TypeRef, usize), ParseError> {
-        // Parse the base type (possibly with array prefix)
         let (base_type, mut end) = self.parse_type_without_optional()?;
 
         // Check for optional suffix - this applies to the whole type
@@ -317,12 +312,10 @@ impl Parser {
             let _start = self.current().unwrap().span.start;
             self.advance();
             self.expect(Token::RBracket)?;
-            // Recursively parse the element type (without optional suffix)
             let (inner, end) = self.parse_type_without_optional()?;
             return Ok((TypeRef::Array(Box::new(inner)), end));
         }
 
-        // Parse base type (primitive or named)
         self.parse_base_type()
     }
 
@@ -386,7 +379,6 @@ impl Parser {
 
     /// Parses a method definition.
     fn parse_method(&mut self) -> Result<Method, ParseError> {
-        // Parse annotations first
         let annotations = self.parse_annotations()?;
 
         let start = annotations
@@ -400,7 +392,6 @@ impl Parser {
         self.expect(Token::RParen)?;
         self.expect(Token::Arrow)?;
 
-        // Parse return type (void or DTO name)
         let (output, end) = if matches!(self.current_token(), Some(Token::Void)) {
             let end = self.current().unwrap().span.end;
             self.advance();
